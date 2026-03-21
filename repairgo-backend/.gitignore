@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+
+# Environment files
+.env
+.env.*
+
+# Logs
+*.log
+repairgo.log
+
+# ML artifacts
+ml/saved_models/*.joblib
+
+# OS/editor
+.vscode/
+.idea/
+.DS_Store
+
+# Node artifacts (if ever added)
+node_modules/

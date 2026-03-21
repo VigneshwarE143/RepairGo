@@ -1,0 +1,2 @@
+# This directory stores trained ML models
+# The reliability_model.joblib and reliability_scaler.joblib files will be saved here after training

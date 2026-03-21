@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+pymongo
+pydantic
+email-validator
+passlib
+bcrypt
+PyJWT
+python-dotenv
+numpy
+pandas
+scikit-learn
+joblib
