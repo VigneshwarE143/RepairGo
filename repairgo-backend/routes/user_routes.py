@@ -21,6 +21,9 @@ def register_user(user: UserRegister):
             "email": user.email,
             "password": hashed_pw,
             "role": user.role,
+            "phone": "",
+            "address": "",
+            "wallet_balance": 0.0,
             "is_active": True,
         }
         users_collection.insert_one(user_data)

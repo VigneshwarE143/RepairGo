@@ -159,8 +159,7 @@ export default function TechnicianJobs() {
   return (
     <div>
       <div className="page-header">
-        <h1>My Jobs</h1>
-        <p>View and manage your assigned jobs</p>
+        <h1>Jobs</h1>
       </div>
 
       {/* Pending Jobs - Need Accept/Reject */}
@@ -182,14 +181,10 @@ export default function TechnicianJobs() {
               style={{ display: "flex", alignItems: "center", gap: "8px" }}
             >
               <span style={{ animation: "pulse 1s infinite" }}>🔔</span>
-              New Job Requests ({pendingJobs.length})
+              Requests ({pendingJobs.length})
             </h3>
           </div>
           <div className="card-body">
-            <p className="text-muted" style={{ marginBottom: "16px" }}>
-              These jobs have been assigned to you. Accept or reject within a
-              reasonable timeframe.
-            </p>
             <div style={{ display: "grid", gap: "16px" }}>
               {pendingJobs.map((job) => (
                 <div
@@ -221,7 +216,13 @@ export default function TechnicianJobs() {
                           {job.category}
                         </h4>
                         <span
-                          className={`badge ${job.urgency === "high" ? "badge-danger" : job.urgency === "medium" ? "badge-warning" : "badge-secondary"}`}
+                          className={`badge ${
+                            job.urgency === "high"
+                              ? "badge-danger"
+                              : job.urgency === "medium"
+                                ? "badge-warning"
+                                : "badge-secondary"
+                          }`}
                         >
                           {job.urgency} priority
                         </span>
@@ -234,22 +235,12 @@ export default function TechnicianJobs() {
                           color: "var(--text-muted)",
                         }}
                       >
+                        <span>₹{job.estimated_price?.toFixed(2) || "TBD"}</span>
                         <span>
-                          📍 {job.location?.latitude?.toFixed(4)},{" "}
-                          {job.location?.longitude?.toFixed(4)}
+                          {new Date(job.created_at).toLocaleDateString()}
                         </span>
-                        <span>
-                          💰 ₹{job.estimated_price?.toFixed(2) || "TBD"}
-                        </span>
-                        <span>
-                          📅 {new Date(job.created_at).toLocaleString()}
-                        </span>
+                        {job.eta_minutes && <span>ETA {job.eta_minutes}m</span>}
                       </div>
-                      {job.description && (
-                        <p style={{ marginTop: "8px", fontSize: "0.9rem" }}>
-                          {job.description}
-                        </p>
-                      )}
                     </div>
                     <div
                       style={{
@@ -322,8 +313,7 @@ export default function TechnicianJobs() {
         <div className="card">
           <div className="empty-state">
             <div className="empty-state-icon">📋</div>
-            <h3>No Jobs Found</h3>
-            <p>No jobs match your current filter.</p>
+            <h3>No jobs</h3>
           </div>
         </div>
       ) : (
@@ -333,9 +323,7 @@ export default function TechnicianJobs() {
               <thead>
                 <tr>
                   <th>Category</th>
-                  <th>Urgency</th>
                   <th>Status</th>
-                  <th>Created</th>
                   <th>Price</th>
                   <th>Actions</th>
                 </tr>
@@ -344,9 +332,9 @@ export default function TechnicianJobs() {
                 {filteredJobs.map((job) => (
                   <tr key={job._id}>
                     <td style={{ textTransform: "capitalize" }}>
-                      {job.category}
-                    </td>
-                    <td>
+                      <span style={{ marginRight: "8px", fontWeight: 600 }}>
+                        {job.category}
+                      </span>
                       <span
                         className={`badge ${job.urgency === "high" ? "badge-danger" : job.urgency === "medium" ? "badge-warning" : "badge-secondary"}`}
                       >
@@ -354,14 +342,13 @@ export default function TechnicianJobs() {
                       </span>
                     </td>
                     <td>{getStatusBadge(job.status)}</td>
-                    <td>{new Date(job.created_at).toLocaleDateString()}</td>
                     <td>₹{job.estimated_price?.toFixed(2) || "0.00"}</td>
                     <td>
                       <Link
                         to={`/technician/job/${job._id}`}
                         className="btn btn-primary btn-sm"
                       >
-                        View
+                        Open
                       </Link>
                     </td>
                   </tr>
@@ -398,11 +385,6 @@ export default function TechnicianJobs() {
               </button>
             </div>
             <div className="modal-body">
-              <p style={{ marginBottom: "16px" }}>
-                Please provide a reason for rejecting this job. The customer
-                will be automatically assigned to another technician.
-              </p>
-
               <div className="form-group">
                 <label className="form-label">Reason for Rejection *</label>
                 <select
@@ -419,19 +401,6 @@ export default function TechnicianJobs() {
                     </option>
                   ))}
                 </select>
-              </div>
-
-              <div
-                style={{
-                  marginTop: "16px",
-                  padding: "12px",
-                  background: "var(--info-bg)",
-                  borderRadius: "8px",
-                  fontSize: "0.875rem",
-                }}
-              >
-                ℹ️ <strong>Note:</strong> Rejecting too many jobs may affect
-                your priority for future assignments.
               </div>
             </div>
             <div className="modal-footer">
@@ -453,9 +422,7 @@ export default function TechnicianJobs() {
                   respondingTo === selectedJobForReject || !rejectReason
                 }
               >
-                {respondingTo === selectedJobForReject
-                  ? "Rejecting..."
-                  : "Confirm Rejection"}
+                {respondingTo === selectedJobForReject ? "..." : "Reject"}
               </button>
             </div>
           </div>

@@ -78,8 +78,7 @@ export default function AdminDashboard() {
   return (
     <div>
       <div className="page-header">
-        <h1>Admin Dashboard</h1>
-        <p>Overview of system performance and metrics</p>
+        <h1>Dashboard</h1>
       </div>
 
       {/* Main Stats */}
@@ -142,7 +141,7 @@ export default function AdminDashboard() {
               to="/admin/jobs?status=pending"
               className="btn btn-ghost btn-sm mt-3"
             >
-              View →
+              View
             </Link>
           </div>
         </div>
@@ -163,7 +162,7 @@ export default function AdminDashboard() {
               to="/admin/jobs?status=active"
               className="btn btn-ghost btn-sm mt-3"
             >
-              View →
+              View
             </Link>
           </div>
         </div>
@@ -184,13 +183,13 @@ export default function AdminDashboard() {
               to="/admin/jobs?status=completed"
               className="btn btn-ghost btn-sm mt-3"
             >
-              View →
+              View
             </Link>
           </div>
         </div>
       </div>
 
-      {/* Demand Forecast & Quick Actions */}
+      {/* Demand & Quick Actions */}
       <div
         style={{
           display: "grid",
@@ -202,44 +201,27 @@ export default function AdminDashboard() {
         {/* Demand Forecast */}
         <div className="card">
           <div className="card-header">
-            <h3 className="card-title">📊 Demand Forecast</h3>
+            <h3 className="card-title">Demand</h3>
           </div>
           <div className="card-body">
             {demandForecast ? (
               <div>
-                <div className="alert alert-info">
-                  <span className="alert-icon">🔮</span>
-                  <div className="alert-content">
-                    <strong>Predicted Demand</strong>
-                    <p>
-                      Expected {demandForecast.predicted_demand || "moderate"}{" "}
-                      demand for plumbing services
-                    </p>
-                  </div>
-                </div>
-                <div style={{ marginTop: "16px" }}>
-                  <div className="text-secondary text-sm">Confidence Score</div>
-                  <div className="progress mt-2">
-                    <div
-                      className="progress-bar success"
-                      style={{
-                        width: `${(demandForecast.confidence || 0.75) * 100}%`,
-                      }}
-                    ></div>
-                  </div>
-                  <span className="text-sm">
-                    {((demandForecast.confidence || 0.75) * 100).toFixed(0)}%
+                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                  <span className="badge badge-info">
+                    {demandForecast.demand_level || "normal"}
+                  </span>
+                  <span className="badge badge-secondary">
+                    x{demandForecast.multiplier || 1}
                   </span>
                 </div>
               </div>
             ) : (
               <div className="text-muted text-center py-4">
-                <p>Demand forecasting unavailable</p>
                 <Link
                   to="/admin/ml-models"
                   className="btn btn-ghost btn-sm mt-2"
                 >
-                  Configure ML Models
+                  ML Models
                 </Link>
               </div>
             )}
@@ -249,56 +231,27 @@ export default function AdminDashboard() {
         {/* Quick Actions */}
         <div className="card">
           <div className="card-header">
-            <h3 className="card-title">⚡ Quick Actions</h3>
+            <h3 className="card-title">Quick Actions</h3>
           </div>
           <div className="card-body">
             <div style={{ display: "grid", gap: "12px" }}>
               <Link to="/admin/jobs" className="btn btn-outline btn-block">
-                📋 Manage Jobs
+                Manage Jobs
               </Link>
               <Link
                 to="/admin/technicians"
                 className="btn btn-outline btn-block"
               >
-                🔧 Manage Technicians
+                Technicians
               </Link>
               <Link to="/admin/fraud" className="btn btn-outline btn-block">
-                🔍 Fraud Detection
+                Fraud
               </Link>
               <Link to="/admin/system" className="btn btn-outline btn-block">
-                ⚙️ System Health
+                System
               </Link>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* System Alerts */}
-      <div className="card" style={{ marginTop: "24px" }}>
-        <div className="card-header">
-          <h3 className="card-title">🔔 System Alerts</h3>
-        </div>
-        <div className="card-body">
-          {stats.pendingJobs > 5 ? (
-            <div className="alert alert-warning">
-              <span className="alert-icon">⚠️</span>
-              <div className="alert-content">
-                <strong>High Pending Jobs</strong>
-                <p>
-                  There are {stats.pendingJobs} pending jobs. Consider
-                  auto-assigning.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="alert alert-success">
-              <span className="alert-icon">✅</span>
-              <div className="alert-content">
-                <strong>All Systems Normal</strong>
-                <p>No critical alerts at this time.</p>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

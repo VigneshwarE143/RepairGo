@@ -48,8 +48,7 @@ export default function MyRequests() {
   return (
     <div>
       <div className="page-header">
-        <h1>My Service Requests</h1>
-        <p>Track and manage your repair requests</p>
+        <h1>Requests</h1>
       </div>
 
       {/* Filters */}
@@ -85,10 +84,9 @@ export default function MyRequests() {
         <div className="card">
           <div className="empty-state">
             <div className="empty-state-icon">📋</div>
-            <h3>No Requests Found</h3>
-            <p>You haven't created any service requests yet.</p>
+            <h3>No requests</h3>
             <Link to="/customer/new-request" className="btn btn-primary">
-              Create Your First Request
+              New Request
             </Link>
           </div>
         </div>
@@ -97,13 +95,15 @@ export default function MyRequests() {
           {filteredRequests.map((request) => (
             <div key={request._id} className="request-card">
               <div className="request-header">
-                <div>
+                <div
+                  style={{ display: "flex", alignItems: "center", gap: "8px" }}
+                >
                   <span className="request-category">{request.category}</span>
                   <span
                     className="badge badge-secondary"
-                    style={{ marginLeft: "8px", textTransform: "capitalize" }}
+                    style={{ textTransform: "capitalize" }}
                   >
-                    {request.urgency} urgency
+                    {request.urgency}
                   </span>
                 </div>
                 {getStatusBadge(request.status)}
@@ -111,22 +111,28 @@ export default function MyRequests() {
 
               <div className="request-meta">
                 <span className="request-meta-item">
-                  📅 {new Date(request.created_at).toLocaleDateString()}
+                  {new Date(request.created_at).toLocaleDateString()}
                 </span>
                 {request.eta_minutes && (
                   <span className="request-meta-item">
-                    ⏱️ ETA: {request.eta_minutes} mins
+                    ETA {request.eta_minutes}m
                   </span>
                 )}
                 {request.technician_id && (
-                  <span className="request-meta-item">
-                    👷 Technician assigned
-                  </span>
+                  <span className="request-meta-item">Tech assigned</span>
                 )}
               </div>
 
               {request.description && (
-                <p className="request-description">{request.description}</p>
+                <details style={{ marginTop: "8px" }}>
+                  <summary className="text-secondary text-sm">Details</summary>
+                  <p
+                    className="request-description"
+                    style={{ marginTop: "8px" }}
+                  >
+                    {request.description}
+                  </p>
+                </details>
               )}
 
               <div className="request-footer">
@@ -137,7 +143,7 @@ export default function MyRequests() {
                     </span>
                   ) : request.estimated_price ? (
                     <span className="text-secondary">
-                      Est. ₹{request.estimated_price.toFixed(2)}
+                      ₹{request.estimated_price.toFixed(2)}
                     </span>
                   ) : null}
                 </div>
@@ -145,7 +151,7 @@ export default function MyRequests() {
                   to={`/customer/request/${request._id}`}
                   className="btn btn-primary btn-sm"
                 >
-                  View Details →
+                  View
                 </Link>
               </div>
             </div>

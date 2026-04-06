@@ -3,7 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pymongo.errors import DuplicateKeyError
 from bson import ObjectId
-from database import technicians_collection, categories_collection, services_collection, users_collection
+from database import technicians_collection, categories_collection, services_collection, users_collection, payments_collection
 from models.technician_model import (
     TechnicianRegister, 
     TechnicianLocationUpdate, 
@@ -43,6 +43,10 @@ def register_technician(tech: TechnicianRegister):
         tech_data["cancelled_jobs"] = 0
         tech_data["is_verified"] = False
         tech_data["total_ratings"] = 0
+        tech_data.setdefault("phone", "")
+        tech_data.setdefault("upi_id", "")
+        tech_data.setdefault("bank_details", {})
+        tech_data.setdefault("earnings", 0.0)
         
         # Insert into technicians collection
         result = technicians_collection.insert_one(tech_data)
@@ -53,6 +57,9 @@ def register_technician(tech: TechnicianRegister):
             "email": tech.email,
             "password": hashed_password,
             "role": "technician",
+            "phone": tech.phone or "",
+            "address": "",
+            "wallet_balance": 0.0,
             "is_active": True,
             "technician_id": str(result.inserted_id),
         }
@@ -497,3 +504,97 @@ def get_technician_live_location(
         "eta_minutes": round(eta_minutes, 0),
         "service_status": service.get("status"),
     })
+
+
+@router.post("/technicians/confirm-payment/{service_id}")
+def confirm_payment_received(
+    service_id: str,
+    payload: dict,
+    user=Depends(require_roles("technician")),
+):
+    """Assigned technician confirms customer-marked payment receipt."""
+    if not payload.get("technician_confirmed"):
+        raise HTTPException(status_code=400, detail="technician_confirmed=true is required")
+
+    try:
+        object_id = ObjectId(service_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid service id")
+
+    service = services_collection.find_one({"_id": object_id, "is_active": True})
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+
+    tech_id = user.get("technician_id")
+    if not tech_id:
+        technician_doc = technicians_collection.find_one({"email": user.get("email")})
+        if technician_doc:
+            tech_id = str(technician_doc["_id"])
+
+    if not tech_id:
+        raise HTTPException(status_code=404, detail="Technician not found")
+
+    if service.get("technician_id") != tech_id:
+        raise HTTPException(status_code=403, detail="Only assigned technician can confirm payment")
+
+    if service.get("payment_method") != "upi":
+        raise HTTPException(status_code=400, detail="Only UPI payments need technician confirmation")
+
+    if not service.get("customer_paid"):
+        raise HTTPException(status_code=400, detail="Customer has not marked payment yet")
+
+    if service.get("technician_confirmed"):
+        raise HTTPException(status_code=400, detail="Payment already confirmed")
+
+    amount = float(service.get("final_price") or service.get("estimated_price") or 0)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Invalid payment amount")
+
+    result = services_collection.update_one(
+        {"_id": object_id, "technician_confirmed": {"$ne": True}},
+        {
+            "$set": {
+                "technician_confirmed": True,
+                "payment_status": "paid",
+                "payment_time": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+            }
+        },
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=400, detail="Payment already confirmed")
+
+    technicians_collection.update_one(
+        {"_id": ObjectId(tech_id)},
+        {"$inc": {"earnings": amount}},
+    )
+
+    payments_collection.update_one(
+        {"service_id": str(object_id), "payment_method": "upi"},
+        {
+            "$set": {
+                "status": "paid",
+                "updated_at": datetime.utcnow(),
+            },
+            "$setOnInsert": {
+                "service_id": str(object_id),
+                "customer_id": service.get("customer_id"),
+                "technician_id": tech_id,
+                "amount": amount,
+                "payment_method": "upi",
+                "created_at": datetime.utcnow(),
+            },
+        },
+        upsert=True,
+    )
+
+    customer_id = service.get("customer_id")
+    if customer_id:
+        create_notification(
+            recipient_id=customer_id,
+            event_type=EventType.PAYMENT,
+            message="Technician confirmed your UPI payment. Marked as paid.",
+            related_id=service_id,
+        )
+
+    return success_response("Payment confirmed", {"payment_status": "paid", "technician_confirmed": True})

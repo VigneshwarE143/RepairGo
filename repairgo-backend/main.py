@@ -10,6 +10,7 @@ from routes.service_routes import router as service_router
 from routes.user_routes import router as user_router
 from routes.admin_routes import router as admin_router
 from routes.ml_routes import router as ml_router
+from routes.profile_routes import router as profile_router
 from utils.reassignment_utils import reassign_stale_jobs
 from utils.exception_handler import setup_exception_handlers
 from utils.response_utils import success_response
@@ -18,6 +19,7 @@ from utils.logger import logger
 from utils.websocket_manager import ws_manager
 from utils.jwt_utils import decode_access_token
 from utils.auth_utils import require_roles
+from utils.model_download import download_models_if_needed
 
 load_dotenv()
 
@@ -56,6 +58,7 @@ app.include_router(user_router)
 app.include_router(service_router)
 app.include_router(admin_router)
 app.include_router(ml_router)
+app.include_router(profile_router)
 
 
 async def reassign_stale_loop() -> None:
@@ -90,6 +93,7 @@ async def reassign_stale_loop() -> None:
 @app.on_event("startup")
 async def start_reassign_loop() -> None:
     """Initialize background task on application startup."""
+    download_models_if_needed()
     asyncio.create_task(reassign_stale_loop())
     logger.info("Background job monitor initialized")
 

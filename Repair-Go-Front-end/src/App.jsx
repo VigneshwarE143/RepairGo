@@ -30,6 +30,7 @@ import CategoriesManagement from "./pages/admin/CategoriesManagement";
 import FraudManagement from "./pages/admin/FraudManagement";
 import MLModels from "./pages/admin/MLModels";
 import SystemHealth from "./pages/admin/SystemHealth";
+import ProfilePage from "./pages/shared/ProfilePage";
 
 // Protected Route Component
 function ProtectedRoute({ children, allowedRoles }) {
@@ -137,6 +138,18 @@ export default function App() {
         <Route path="fraud" element={<FraudManagement />} />
         <Route path="ml-models" element={<MLModels />} />
         <Route path="system" element={<SystemHealth />} />
+      </Route>
+
+      {/* Shared Profile Route */}
+      <Route
+        path="/profile"
+        element={
+          <ProtectedRoute allowedRoles={["customer", "technician", "admin"]}>
+            <MainLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<ProfilePage />} />
       </Route>
 
       {/* Redirects */}

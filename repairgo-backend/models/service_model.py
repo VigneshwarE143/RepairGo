@@ -12,12 +12,22 @@ class ServiceCreate(BaseModel):
     description: str
     location: Location
     urgency: Literal["low", "medium", "high"]
+    payment_method: Optional[Literal["cash", "upi", "card"]] = None
+    payment_status: str = "pending"
+    customer_paid: bool = False
+    technician_confirmed: bool = False
+    payment_time: Optional[str] = None
 
 
 class PaymentRequest(BaseModel):
     """Payment request payload."""
-    payment_method: Literal["card", "cash", "wallet"] = "card"
+    payment_method: Literal["cash", "upi", "card"] = "upi"
+    customer_paid: bool = False
+    technician_confirmed: bool = False
     transaction_id: Optional[str] = None  # External payment gateway ID
+    razorpay_order_id: Optional[str] = None
+    razorpay_payment_id: Optional[str] = None
+    razorpay_signature: Optional[str] = None
 
 
 class ServiceEstimate(BaseModel):

@@ -227,8 +227,7 @@ export default function NewRequest() {
   return (
     <div>
       <div className="page-header">
-        <h1>Create Service Request</h1>
-        <p>Tell us what you need help with</p>
+        <h1>New Request</h1>
       </div>
 
       {/* Progress Steps */}
@@ -290,9 +289,7 @@ export default function NewRequest() {
             {step === 1 && (
               <>
                 <div className="form-group">
-                  <label className="form-label required">
-                    Service Category
-                  </label>
+                  <label className="form-label required">Category</label>
                   <div
                     style={{
                       display: "grid",
@@ -329,9 +326,6 @@ export default function NewRequest() {
                           {cat.icon}
                         </div>
                         <h4>{cat.label}</h4>
-                        <p className="text-secondary text-sm">
-                          {cat.description}
-                        </p>
                       </label>
                     ))}
                   </div>
@@ -343,7 +337,7 @@ export default function NewRequest() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label required">Urgency Level</label>
+                  <label className="form-label required">Urgency</label>
                   <div
                     style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}
                   >
@@ -373,9 +367,6 @@ export default function NewRequest() {
                           style={{ display: "none" }}
                         />
                         <h4>{level.label}</h4>
-                        <p className="text-secondary text-sm">
-                          {level.description}
-                        </p>
                         <span
                           className="badge badge-primary"
                           style={{ marginTop: "8px" }}
@@ -412,13 +403,10 @@ export default function NewRequest() {
             {step === 2 && (
               <>
                 <div style={{ textAlign: "center", marginBottom: "24px" }}>
-                  <div style={{ fontSize: "3rem", marginBottom: "16px" }}>
+                  <div style={{ fontSize: "2.5rem", marginBottom: "12px" }}>
                     📍
                   </div>
-                  <h3>Where do you need service?</h3>
-                  <p className="text-secondary">
-                    We'll find technicians near your location
-                  </p>
+                  <h3>Location</h3>
                 </div>
 
                 <button
@@ -427,14 +415,14 @@ export default function NewRequest() {
                   onClick={getLocationFromBrowser}
                   style={{ marginBottom: "24px" }}
                 >
-                  📍 Use My Current Location
+                  Use Current Location
                 </button>
 
                 <div
                   className="text-center text-muted"
                   style={{ marginBottom: "24px" }}
                 >
-                  — or enter manually —
+                  or enter manually
                 </div>
 
                 <div
@@ -450,7 +438,7 @@ export default function NewRequest() {
                       type="number"
                       step="any"
                       className={`form-input ${errors.latitude ? "error" : ""}`}
-                      placeholder="e.g., 40.7128"
+                      placeholder="Latitude"
                       {...register("latitude", {
                         required: "Latitude is required",
                       })}
@@ -467,7 +455,7 @@ export default function NewRequest() {
                       type="number"
                       step="any"
                       className={`form-input ${errors.longitude ? "error" : ""}`}
-                      placeholder="e.g., -74.0060"
+                      placeholder="Longitude"
                       {...register("longitude", {
                         required: "Longitude is required",
                       })}
@@ -499,10 +487,10 @@ export default function NewRequest() {
                     {estimating ? (
                       <>
                         <span className="loading-spinner sm"></span>
-                        Getting Estimate...
+                        Estimating...
                       </>
                     ) : (
-                      "Get Price Estimate →"
+                      "Get Estimate"
                     )}
                   </button>
                 </div>
@@ -513,84 +501,18 @@ export default function NewRequest() {
             {step === 3 && estimate && (
               <>
                 <div style={{ textAlign: "center", marginBottom: "24px" }}>
-                  <div style={{ fontSize: "3rem", marginBottom: "16px" }}>
+                  <div style={{ fontSize: "2.5rem", marginBottom: "12px" }}>
                     ✅
                   </div>
-                  <h3>Your Estimate</h3>
+                  <h3>Estimate</h3>
                 </div>
 
-                <div
-                  className="card"
-                  style={{ background: "var(--gray-50)", marginBottom: "24px" }}
-                >
-                  <div className="card-body">
-                    <div style={{ display: "grid", gap: "16px" }}>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                        }}
-                      >
-                        <span>Base Price:</span>
-                        <strong>₹{estimate.base_price?.toFixed(2)}</strong>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                        }}
-                      >
-                        <span>Travel Cost:</span>
-                        <strong>₹{estimate.travel_cost?.toFixed(2)}</strong>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                        }}
-                      >
-                        <span>Urgency Addon:</span>
-                        <strong>₹{estimate.urgency_addon?.toFixed(2)}</strong>
-                      </div>
-                      {estimate.surge_multiplier > 1 && (
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            color: "var(--warning)",
-                          }}
-                        >
-                          <span>Surge ({estimate.surge_multiplier}x):</span>
-                          <strong>Applied</strong>
-                        </div>
-                      )}
-                      <hr
-                        style={{
-                          border: "none",
-                          borderTop: "1px solid var(--border-color)",
-                        }}
-                      />
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontSize: "1.5rem",
-                        }}
-                      >
-                        <span>Total Estimate:</span>
-                        <strong className="text-primary">
-                          ₹{estimate.final_price?.toFixed(2)}
-                        </strong>
-                      </div>
+                <div className="card" style={{ marginBottom: "24px" }}>
+                  <div className="card-body" style={{ textAlign: "center" }}>
+                    <div className="text-secondary text-sm">Total</div>
+                    <div className="request-price" style={{ fontSize: "2rem" }}>
+                      ₹{estimate.final_price?.toFixed(2)}
                     </div>
-                  </div>
-                </div>
-
-                <div className="alert alert-info">
-                  <span className="alert-icon">ℹ️</span>
-                  <div className="alert-content">
-                    This is an estimate. Final price may vary based on actual
-                    work required.
                   </div>
                 </div>
 
@@ -613,10 +535,10 @@ export default function NewRequest() {
                     {loading ? (
                       <>
                         <span className="loading-spinner sm"></span>
-                        Finding Best Technician...
+                        Finding...
                       </>
                     ) : (
-                      "Find Best Technician →"
+                      "Find Technician"
                     )}
                   </button>
                 </div>
@@ -627,14 +549,10 @@ export default function NewRequest() {
             {step === 4 && suggestedTechnicians.length > 0 && (
               <>
                 <div style={{ textAlign: "center", marginBottom: "24px" }}>
-                  <div style={{ fontSize: "3rem", marginBottom: "16px" }}>
+                  <div style={{ fontSize: "2.5rem", marginBottom: "12px" }}>
                     🎯
                   </div>
-                  <h3>Choose Your Technician</h3>
-                  <p className="text-secondary">
-                    Our ML system ranked the best technicians for you. Select
-                    one to send a request.
-                  </p>
+                  <h3>Choose Technician</h3>
                 </div>
 
                 <div
@@ -662,23 +580,6 @@ export default function NewRequest() {
                         transition: "all 0.2s ease",
                       }}
                     >
-                      {index === 0 && (
-                        <div
-                          style={{
-                            position: "absolute",
-                            top: "-10px",
-                            left: "16px",
-                            background: "var(--success)",
-                            color: "white",
-                            padding: "3px 10px",
-                            borderRadius: "20px",
-                            fontSize: "0.7rem",
-                            fontWeight: "bold",
-                          }}
-                        >
-                          ML Best Match
-                        </div>
-                      )}
                       <div
                         style={{
                           display: "flex",
@@ -729,12 +630,6 @@ export default function NewRequest() {
                             >
                               ⭐ {tech.rating?.toFixed(1) || "New"}
                             </span>
-                            <span
-                              className="text-secondary"
-                              style={{ fontSize: "0.8rem" }}
-                            >
-                              • {tech.completed_jobs || 0} jobs
-                            </span>
                           </div>
                           <div
                             style={{
@@ -745,26 +640,9 @@ export default function NewRequest() {
                               flexWrap: "wrap",
                             }}
                           >
-                            <span>🚗 ~{Math.round(tech.eta_minutes)} min</span>
-                            <span>📍 {tech.distance_km?.toFixed(1)} km</span>
-                            <span>🤖 {tech.ml_score}% match</span>
+                            <span>ETA {Math.round(tech.eta_minutes)}m</span>
+                            <span>{tech.distance_km?.toFixed(1)} km</span>
                           </div>
-                          {tech.skills?.length > 0 && (
-                            <div style={{ marginTop: "6px" }}>
-                              {tech.skills.map((skill, i) => (
-                                <span
-                                  key={i}
-                                  className="badge badge-secondary"
-                                  style={{
-                                    marginRight: "6px",
-                                    fontSize: "0.7rem",
-                                  }}
-                                >
-                                  {skill}
-                                </span>
-                              ))}
-                            </div>
-                          )}
                         </div>
 
                         {/* Selection indicator */}
@@ -814,7 +692,7 @@ export default function NewRequest() {
                         alignItems: "center",
                       }}
                     >
-                      <span>Estimated Price:</span>
+                      <span>Estimate</span>
                       <strong
                         style={{
                           fontSize: "1.5rem",
@@ -826,17 +704,6 @@ export default function NewRequest() {
                     </div>
                   </div>
                 )}
-
-                <div
-                  className="alert alert-info"
-                  style={{ marginBottom: "24px" }}
-                >
-                  <span className="alert-icon">ℹ️</span>
-                  <div className="alert-content">
-                    After you select a technician, they will need to accept the
-                    job before the booking is confirmed.
-                  </div>
-                </div>
 
                 <div
                   style={{ display: "flex", gap: "12px", marginTop: "24px" }}
@@ -859,10 +726,10 @@ export default function NewRequest() {
                     {confirming ? (
                       <>
                         <span className="loading-spinner sm"></span>
-                        Sending Request...
+                        Sending...
                       </>
                     ) : (
-                      "✓ Send Request to Technician"
+                      "Send"
                     )}
                   </button>
                 </div>

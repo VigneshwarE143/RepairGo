@@ -1,8 +1,8 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import { useSelector, useDispatch } from "react-redux";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { logout, addNotification } from "../store";
-import { createWebSocket } from "../services/api";
+import { createWebSocket, serviceAPI, technicianAPI } from "../services/api";
 import toast from "react-hot-toast";
 
 // Navigation configs for each role
@@ -11,10 +11,12 @@ const navConfigs = {
     { path: "/customer", label: "Dashboard", icon: "📊", exact: true },
     { path: "/customer/new-request", label: "New Request", icon: "➕" },
     { path: "/customer/my-requests", label: "My Requests", icon: "📋" },
+    { path: "/profile", label: "Profile", icon: "👤" },
   ],
   technician: [
     { path: "/technician", label: "Dashboard", icon: "📊", exact: true },
     { path: "/technician/jobs", label: "My Jobs", icon: "🔧" },
+    { path: "/profile", label: "Profile", icon: "👤" },
   ],
   admin: [
     {
@@ -42,6 +44,7 @@ const navConfigs = {
       items: [
         { path: "/admin/ml-models", label: "ML Models", icon: "🤖" },
         { path: "/admin/system", label: "System Health", icon: "⚡" },
+        { path: "/profile", label: "Profile", icon: "👤" },
       ],
     },
   ],
@@ -55,6 +58,7 @@ export default function MainLayout() {
   const [ws, setWs] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const lastSeenStatusRef = useRef({});
 
   // WebSocket connection for real-time notifications (optional - fails silently)
   useEffect(() => {
@@ -87,6 +91,67 @@ export default function MainLayout() {
       }
     }
   }, [token, dispatch]);
+
+  // Polling fallback for websocket instability.
+  useEffect(() => {
+    if (!token || !role) return;
+
+    const interval = setInterval(async () => {
+      try {
+        if (role === "customer") {
+          const response = await serviceAPI.getMyRequests();
+          const requests = response.data || [];
+          requests.forEach((item) => {
+            const current = item.status;
+            const previous = lastSeenStatusRef.current[item._id];
+            lastSeenStatusRef.current[item._id] = current;
+            if (previous && previous !== current) {
+              const message = `Request ${item._id?.slice(-6)} status: ${current.replace(/_/g, " ")}`;
+              toast(message, { icon: "🔔" });
+              const event = {
+                type: "notification",
+                message,
+                related_id: item._id,
+              };
+              setNotifications((prev) => [
+                { id: Date.now(), ...event },
+                ...prev,
+              ]);
+              dispatch(addNotification(event));
+            }
+          });
+        }
+
+        if (role === "technician") {
+          const response = await technicianAPI.getPendingJobs();
+          const pendingJobs = response.data || [];
+          pendingJobs.forEach((job) => {
+            const key = `pending:${job._id}`;
+            const previouslySeen = lastSeenStatusRef.current[key];
+            if (!previouslySeen) {
+              const message = `New pending job: ${job.category || "service"}`;
+              toast(message, { icon: "🔔" });
+              const event = {
+                type: "notification",
+                message,
+                related_id: job._id,
+              };
+              setNotifications((prev) => [
+                { id: Date.now(), ...event },
+                ...prev,
+              ]);
+              dispatch(addNotification(event));
+            }
+            lastSeenStatusRef.current[key] = true;
+          });
+        }
+      } catch {
+        // Polling is best-effort fallback; ignore transient failures.
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [token, role, dispatch]);
 
   const handleLogout = () => {
     if (ws) ws.close();

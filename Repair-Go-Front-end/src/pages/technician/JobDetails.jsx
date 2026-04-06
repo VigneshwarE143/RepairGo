@@ -47,6 +47,37 @@ export default function JobDetails() {
     loadJob();
   }, [id]);
 
+  // WebSocket remains primary; polling provides fallback reliability.
+  useEffect(() => {
+    const isTerminal =
+      job?.status === "cancelled" ||
+      job?.status === "rated" ||
+      (job?.status === "completed" && job?.payment_status === "paid");
+    if (isTerminal) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const pendingResponse = await technicianAPI.getPendingJobs();
+        const pendingJob = pendingResponse.data?.find((j) => j._id === id);
+        if (pendingJob) {
+          setJob((prev) => ({ ...prev, ...pendingJob }));
+          return;
+        }
+
+        // If no longer pending, refresh from full job list to reflect assignment/progress updates.
+        const jobsResponse = await technicianAPI.getMyJobs();
+        const currentJob = jobsResponse.data?.find((j) => j._id === id);
+        if (currentJob) {
+          setJob((prev) => ({ ...prev, ...currentJob }));
+        }
+      } catch {
+        // Ignore polling failures; websocket/next poll will resync.
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [id, job?.status]);
+
   // Get initial location for the map
   useEffect(() => {
     if (navigator.geolocation && !myLocation) {
@@ -199,6 +230,25 @@ export default function JobDetails() {
     }
   };
 
+  const confirmPaymentReceived = async () => {
+    setProcessing(true);
+    try {
+      await technicianAPI.confirmPayment(id, { technician_confirmed: true });
+      toast.success("Payment confirmed and marked as paid");
+      loadJob();
+    } catch (error) {
+      toast.error(error.message || "Failed to confirm payment");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const getPaymentStatusLabel = (status) => {
+    if (status === "paid") return "Paid";
+    if (status === "pending_confirmation") return "Waiting for Confirmation";
+    return "Pending";
+  };
+
   const getStatusBadge = (status) => {
     const classes = {
       awaiting_technician_acceptance: "badge-warning",
@@ -254,8 +304,8 @@ export default function JobDetails() {
             ← Back
           </button>
         </div>
-        <h1>Job Details</h1>
-        <p>Job ID: {job._id}</p>
+        <h1>Job</h1>
+        <p className="text-muted text-sm">#{job._id}</p>
       </div>
 
       <div
@@ -266,71 +316,10 @@ export default function JobDetails() {
           {/* Status Card */}
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title">Job Status</h3>
+              <h3 className="card-title">Status</h3>
               {getStatusBadge(job.status)}
             </div>
             <div className="card-body">
-              {/* Progress */}
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  marginBottom: "24px",
-                }}
-              >
-                {["accepted", "on_the_way", "in_progress", "completed"].map(
-                  (status, index) => {
-                    const steps = [
-                      "accepted",
-                      "on_the_way",
-                      "in_progress",
-                      "completed",
-                    ];
-                    // Also support legacy "assigned" status
-                    const jobStatusForComparison =
-                      job.status === "assigned" ? "accepted" : job.status;
-                    const currentIndex = steps.indexOf(jobStatusForComparison);
-                    const isActive = index <= currentIndex;
-                    const isCurrent = status === jobStatusForComparison;
-
-                    return (
-                      <div
-                        key={status}
-                        style={{ textAlign: "center", flex: 1 }}
-                      >
-                        <div
-                          style={{
-                            width: 40,
-                            height: 40,
-                            borderRadius: "50%",
-                            background: isActive
-                              ? "var(--primary)"
-                              : "var(--gray-200)",
-                            color: isActive ? "white" : "var(--gray-500)",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            margin: "0 auto 8px",
-                            fontWeight: 600,
-                            border: isCurrent
-                              ? "3px solid var(--primary-dark)"
-                              : "none",
-                          }}
-                        >
-                          {index < currentIndex ? "✓" : index + 1}
-                        </div>
-                        <span
-                          className={`text-sm ${isActive ? "font-medium" : "text-muted"}`}
-                        >
-                          {status.replace(/_/g, " ")}
-                        </span>
-                      </div>
-                    );
-                  },
-                )}
-              </div>
-
-              {/* Action Buttons */}
               {canAdvance && (
                 <div
                   className="alert alert-info"
@@ -338,10 +327,7 @@ export default function JobDetails() {
                 >
                   <span className="alert-icon">{statusInfo.icon}</span>
                   <div className="alert-content">
-                    <strong>Next Step: {statusInfo.label}</strong>
-                    <p className="text-sm">
-                      Click the button below to update the job status.
-                    </p>
+                    <strong>{statusInfo.label}</strong>
                   </div>
                 </div>
               )}
@@ -357,7 +343,7 @@ export default function JobDetails() {
                     {processing ? (
                       <>
                         <span className="loading-spinner sm"></span>
-                        Updating...
+                        Updating
                       </>
                     ) : (
                       <>
@@ -372,7 +358,7 @@ export default function JobDetails() {
                     className="btn btn-danger"
                     onClick={() => setShowCancelModal(true)}
                   >
-                    Cancel Job
+                    Cancel
                   </button>
                 )}
               </div>
@@ -399,16 +385,7 @@ export default function JobDetails() {
                     📍
                   </span>
                   <div>
-                    <strong style={{ color: "var(--success)" }}>
-                      Live Location Active
-                    </strong>
-                    <p
-                      className="text-muted"
-                      style={{ margin: 0, fontSize: "0.8rem" }}
-                    >
-                      Your location is being shared with the customer in
-                      real-time
-                    </p>
+                    <strong style={{ color: "var(--success)" }}>Live</strong>
                   </div>
                 </div>
               )}
@@ -418,71 +395,46 @@ export default function JobDetails() {
           {/* Job Details */}
           <div className="card" style={{ marginTop: "24px" }}>
             <div className="card-header">
-              <h3 className="card-title">Service Details</h3>
+              <h3 className="card-title">Details</h3>
             </div>
             <div className="card-body">
-              <div style={{ display: "grid", gap: "16px" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "12px 0",
-                    borderBottom: "1px solid var(--border-color)",
-                  }}
-                >
-                  <span className="text-secondary">Category</span>
-                  <strong style={{ textTransform: "capitalize" }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                  gap: "16px",
+                }}
+              >
+                <div>
+                  <div className="text-secondary text-xs">Category</div>
+                  <div
+                    className="font-semibold"
+                    style={{ textTransform: "capitalize" }}
+                  >
                     {job.category}
-                  </strong>
+                  </div>
                 </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "12px 0",
-                    borderBottom: "1px solid var(--border-color)",
-                  }}
-                >
-                  <span className="text-secondary">Urgency</span>
+                <div>
+                  <div className="text-secondary text-xs">Urgency</div>
                   <span
                     className={`badge ${job.urgency === "high" ? "badge-danger" : job.urgency === "medium" ? "badge-warning" : "badge-secondary"}`}
                   >
                     {job.urgency}
                   </span>
                 </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "12px 0",
-                    borderBottom: "1px solid var(--border-color)",
-                  }}
-                >
-                  <span className="text-secondary">Created</span>
-                  <strong>{new Date(job.created_at).toLocaleString()}</strong>
+                <div>
+                  <div className="text-secondary text-xs">Created</div>
+                  <div className="font-semibold">
+                    {new Date(job.created_at).toLocaleDateString()}
+                  </div>
                 </div>
-                {job.assigned_at && (
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      padding: "12px 0",
-                      borderBottom: "1px solid var(--border-color)",
-                    }}
-                  >
-                    <span className="text-secondary">Assigned</span>
-                    <strong>
-                      {new Date(job.assigned_at).toLocaleString()}
-                    </strong>
-                  </div>
-                )}
-                {job.description && (
-                  <div style={{ padding: "12px 0" }}>
-                    <span className="text-secondary">Description</span>
-                    <p style={{ marginTop: "8px" }}>{job.description}</p>
-                  </div>
-                )}
               </div>
+              {job.description && (
+                <details style={{ marginTop: "16px" }}>
+                  <summary className="text-secondary text-sm">Notes</summary>
+                  <p style={{ marginTop: "8px" }}>{job.description}</p>
+                </details>
+              )}
             </div>
           </div>
         </div>
@@ -494,29 +446,8 @@ export default function JobDetails() {
             job.status === "accepted" ||
             job.status === "assigned") && (
             <div className="card" style={{ marginBottom: "16px" }}>
-              <div
-                className="card-header"
-                style={{
-                  background:
-                    job.status === "on_the_way"
-                      ? "linear-gradient(135deg, #3B82F6, #1D4ED8)"
-                      : "var(--card-header-bg)",
-                }}
-              >
-                <h3
-                  className="card-title"
-                  style={{
-                    color: job.status === "on_the_way" ? "white" : "inherit",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                  }}
-                >
-                  {job.status === "on_the_way" && (
-                    <span style={{ animation: "pulse 1s infinite" }}>📍</span>
-                  )}
-                  Navigation Map
-                </h3>
+              <div className="card-header">
+                <h3 className="card-title">Map</h3>
               </div>
               <div className="card-body" style={{ padding: 0 }}>
                 <MapView
@@ -552,27 +483,15 @@ export default function JobDetails() {
           {/* Customer Location */}
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title">📍 Customer Location</h3>
+              <h3 className="card-title">Location</h3>
             </div>
             <div className="card-body">
               <div style={{ display: "grid", gap: "12px" }}>
-                <div>
-                  <span className="text-secondary text-sm">Latitude</span>
-                  <p className="font-semibold">
-                    {job.location?.latitude || "N/A"}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-secondary text-sm">Longitude</span>
-                  <p className="font-semibold">
-                    {job.location?.longitude || "N/A"}
-                  </p>
-                </div>
                 {(job.live_eta_minutes || job.eta_minutes) && (
                   <div>
                     <span className="text-secondary text-sm">ETA</span>
                     <p className="font-semibold">
-                      {job.live_eta_minutes || job.eta_minutes} minutes
+                      {job.live_eta_minutes || job.eta_minutes}m
                     </p>
                   </div>
                 )}
@@ -598,7 +517,7 @@ export default function JobDetails() {
                   }
                 }}
               >
-                🗺️ Open in Maps
+                Open in Maps
               </button>
             </div>
           </div>
@@ -606,11 +525,11 @@ export default function JobDetails() {
           {/* Payment Info */}
           <div className="card" style={{ marginTop: "16px" }}>
             <div className="card-header">
-              <h3 className="card-title">💰 Payment</h3>
+              <h3 className="card-title">Payment</h3>
             </div>
             <div className="card-body">
               <div style={{ textAlign: "center" }}>
-                <div className="text-secondary text-sm">Estimated Price</div>
+                <div className="text-secondary text-sm">Estimate</div>
                 <div
                   style={{
                     fontSize: "2rem",
@@ -622,11 +541,31 @@ export default function JobDetails() {
                 </div>
                 {job.payment_status && (
                   <span
-                    className={`badge ${job.payment_status === "paid" ? "badge-success" : "badge-warning"} mt-2`}
+                    className={`badge ${job.payment_status === "paid" ? "badge-success" : job.payment_status === "pending_confirmation" ? "badge-info" : "badge-warning"} mt-2`}
                   >
-                    {job.payment_status}
+                    {getPaymentStatusLabel(job.payment_status)}
                   </span>
                 )}
+
+                {job.customer_paid &&
+                  !job.technician_confirmed &&
+                  job.payment_method === "upi" && (
+                    <div style={{ marginTop: "12px" }}>
+                      <div
+                        className="text-secondary text-sm"
+                        style={{ marginBottom: "8px" }}
+                      >
+                        Customer paid
+                      </div>
+                      <button
+                        className="btn btn-primary btn-block"
+                        onClick={confirmPaymentReceived}
+                        disabled={processing}
+                      >
+                        {processing ? "..." : "Confirm"}
+                      </button>
+                    </div>
+                  )}
               </div>
             </div>
           </div>
@@ -656,7 +595,7 @@ export default function JobDetails() {
         >
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">Cancel Job</h3>
+              <h3 className="modal-title">Cancel</h3>
               <button
                 className="modal-close"
                 onClick={() => setShowCancelModal(false)}
@@ -665,33 +604,21 @@ export default function JobDetails() {
               </button>
             </div>
             <div className="modal-body">
-              <div className="alert alert-danger">
-                <span className="alert-icon">⚠️</span>
-                <div className="alert-content">
-                  <strong>Warning</strong>
-                  <p>
-                    Cancelling jobs affects your reliability score and may
-                    result in penalties.
-                  </p>
-                </div>
-              </div>
-              <p style={{ marginTop: "16px" }}>
-                Are you sure you want to cancel this job?
-              </p>
+              <p>Cancel this job?</p>
             </div>
             <div className="modal-footer">
               <button
                 className="btn btn-secondary"
                 onClick={() => setShowCancelModal(false)}
               >
-                Keep Job
+                Keep
               </button>
               <button
                 className="btn btn-danger"
                 onClick={cancelJob}
                 disabled={processing}
               >
-                {processing ? "Cancelling..." : "Yes, Cancel Job"}
+                {processing ? "..." : "Cancel"}
               </button>
             </div>
           </div>

@@ -1,6 +1,6 @@
 # User model definitions go here.
 from pydantic import BaseModel, EmailStr, Field, validator
-from typing import Literal
+from typing import Literal, Optional
 
 class UserRegister(BaseModel):
     name: str = Field(min_length=1)
@@ -18,3 +18,17 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
+
+class UserProfileUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1)
+    phone: Optional[str] = None
+    address: Optional[str] = None
+
+
+class UserProfileResponse(BaseModel):
+    role: str
+    name: str
+    email: EmailStr
+    phone: Optional[str] = None
+    address: Optional[str] = None

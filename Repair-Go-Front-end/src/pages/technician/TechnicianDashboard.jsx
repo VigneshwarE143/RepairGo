@@ -86,8 +86,7 @@ export default function TechnicianDashboard() {
   return (
     <div>
       <div className="page-header">
-        <h1>Technician Dashboard</h1>
-        <p>Manage your jobs and availability</p>
+        <h1>Dashboard</h1>
         <div className="page-header-actions">
           <button
             className="btn btn-outline"
@@ -97,14 +96,14 @@ export default function TechnicianDashboard() {
             {locationUpdating ? (
               <>
                 <span className="loading-spinner sm"></span>
-                Updating...
+                Updating
               </>
             ) : (
-              "📍 Update Location"
+              "Update Location"
             )}
           </button>
           <Link to="/technician/jobs" className="btn btn-primary">
-            View All Jobs
+            Jobs
           </Link>
         </div>
       </div>
@@ -143,15 +142,14 @@ export default function TechnicianDashboard() {
         <div className="card-header">
           <h3 className="card-title">Active Jobs</h3>
           <Link to="/technician/jobs" className="btn btn-ghost btn-sm">
-            View All →
+            View
           </Link>
         </div>
         <div className="card-body">
           {jobs.length === 0 ? (
             <div className="empty-state">
               <div className="empty-state-icon">📋</div>
-              <h3>No Active Jobs</h3>
-              <p>You don't have any active jobs at the moment.</p>
+              <h3>No active jobs</h3>
             </div>
           ) : (
             <div style={{ display: "grid", gap: "16px" }}>
@@ -175,11 +173,11 @@ export default function TechnicianDashboard() {
 
                   <div className="request-meta">
                     <span className="request-meta-item">
-                      📅 {new Date(job.created_at).toLocaleDateString()}
+                      {new Date(job.created_at).toLocaleDateString()}
                     </span>
                     {job.eta_minutes && (
                       <span className="request-meta-item">
-                        ⏱️ ETA: {job.eta_minutes} mins
+                        ETA {job.eta_minutes}m
                       </span>
                     )}
                   </div>
@@ -192,51 +190,13 @@ export default function TechnicianDashboard() {
                       to={`/technician/job/${job._id}`}
                       className="btn btn-primary btn-sm"
                     >
-                      Manage Job →
+                      Open
                     </Link>
                   </div>
                 </div>
               ))}
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Quick Tips */}
-      <div className="card" style={{ marginTop: "24px" }}>
-        <div className="card-header">
-          <h3 className="card-title">Tips for Success</h3>
-        </div>
-        <div className="card-body">
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-              gap: "16px",
-            }}
-          >
-            <div className="alert alert-success">
-              <span className="alert-icon">✅</span>
-              <div className="alert-content">
-                <strong>Keep Location Updated</strong>
-                <p className="text-sm">Helps with accurate job assignments</p>
-              </div>
-            </div>
-            <div className="alert alert-info">
-              <span className="alert-icon">⏰</span>
-              <div className="alert-content">
-                <strong>Respond Quickly</strong>
-                <p className="text-sm">Fast response improves your score</p>
-              </div>
-            </div>
-            <div className="alert alert-warning">
-              <span className="alert-icon">⭐</span>
-              <div className="alert-content">
-                <strong>Maintain Quality</strong>
-                <p className="text-sm">Good ratings mean more jobs</p>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import { serviceAPI } from "../../services/api";
@@ -13,17 +13,17 @@ export default function RequestDetails() {
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [rating, setRating] = useState(5);
   const [processing, setProcessing] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState("upi");
+  const [upiPaymentData, setUpiPaymentData] = useState(null);
   const [confirming, setConfirming] = useState(false);
   const [suggestedTechnicians, setSuggestedTechnicians] = useState([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
 
-  // Cancel booking state
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancellationReasons, setCancellationReasons] = useState({});
   const [selectedCancelReason, setSelectedCancelReason] = useState("");
   const [cancelNotes, setCancelNotes] = useState("");
 
-  // Live tracking state
   const [technicianLocation, setTechnicianLocation] = useState(null);
   const [trackingActive, setTrackingActive] = useState(false);
 
@@ -32,23 +32,30 @@ export default function RequestDetails() {
     loadCancellationReasons();
   }, [id]);
 
-  // Poll service status every 10 seconds to catch technician status changes
   useEffect(() => {
     if (!request) return;
-    const terminalStatuses = ["completed", "rated", "cancelled"];
-    if (terminalStatuses.includes(request.status)) return;
+    const isTerminal =
+      request.status === "cancelled" ||
+      request.status === "rated" ||
+      (request.status === "completed" && request.payment_status === "paid");
+    if (isTerminal) return;
 
     const interval = setInterval(async () => {
       try {
-        const response = await serviceAPI.getMyRequests();
-        const found = response.data?.find((r) => r._id === id);
+        const response = await serviceAPI.getById(id);
+        const found = response.data;
         if (found) {
-          setRequest(found);
+          setRequest((prev) => ({ ...prev, ...found }));
+          if (
+            ["accepted", "on_the_way", "in_progress"].includes(found.status)
+          ) {
+            loadTechnicianLocation();
+          }
         }
       } catch {
         // Silently handle polling errors
       }
-    }, 10000);
+    }, 4000);
 
     return () => clearInterval(interval);
   }, [id, request?.status]);
@@ -63,12 +70,11 @@ export default function RequestDetails() {
     }
   }, [request]);
 
-  // Live tracking - poll technician location when on_the_way, accepted, or in_progress
   useEffect(() => {
     if (["on_the_way", "accepted", "in_progress"].includes(request?.status)) {
       setTrackingActive(true);
       loadTechnicianLocation();
-      const interval = setInterval(loadTechnicianLocation, 5000); // Update every 5 seconds
+      const interval = setInterval(loadTechnicianLocation, 5000);
       return () => clearInterval(interval);
     } else {
       setTrackingActive(false);
@@ -81,7 +87,7 @@ export default function RequestDetails() {
       const response = await serviceAPI.getTechnicianLocation(id);
       setTechnicianLocation(response.data);
     } catch {
-      // Location not available - technician might not be on the way yet
+      // Location not available
     }
   };
 
@@ -90,15 +96,15 @@ export default function RequestDetails() {
       const response = await serviceAPI.getCancellationReasons();
       setCancellationReasons(response.data || {});
     } catch {
-      // Use default reasons if endpoint unavailable
+      // Use defaults if endpoint unavailable
     }
   };
 
   const loadRequest = async () => {
     setLoading(true);
     try {
-      const response = await serviceAPI.getMyRequests();
-      const found = response.data?.find((r) => r._id === id);
+      const response = await serviceAPI.getById(id);
+      const found = response.data;
       if (found) {
         setRequest(found);
       } else {
@@ -118,7 +124,7 @@ export default function RequestDetails() {
       const response = await serviceAPI.getSuggestedTechnicians(id);
       setSuggestedTechnicians(response.data?.technicians || []);
     } catch {
-      // Suggestions unavailable - may already be assigned
+      // Suggestions unavailable
     } finally {
       setLoadingSuggestions(false);
     }
@@ -127,15 +133,47 @@ export default function RequestDetails() {
   const handlePayment = async () => {
     setProcessing(true);
     try {
-      await serviceAPI.pay(id, { payment_method: "card" });
-      toast.success("Payment successful!");
-      setShowPayModal(false);
-      loadRequest();
+      if (paymentMethod === "cash") {
+        await serviceAPI.pay(id, { payment_method: "cash" });
+        toast.success("Payment marked as Cash");
+        setShowPayModal(false);
+        setUpiPaymentData(null);
+        loadRequest();
+        return;
+      }
+
+      const response = await serviceAPI.pay(id, { payment_method: "upi" });
+      setUpiPaymentData(response.data || null);
+      toast.success("Scan QR and pay using any UPI app");
     } catch (error) {
       toast.error(error.message || "Payment failed");
     } finally {
       setProcessing(false);
     }
+  };
+
+  const markUpiPaid = async () => {
+    setProcessing(true);
+    try {
+      await serviceAPI.pay(id, {
+        payment_method: "upi",
+        customer_paid: true,
+      });
+      toast.success("Marked as paid. Waiting for technician confirmation.");
+      setShowPayModal(false);
+      setUpiPaymentData(null);
+      loadRequest();
+    } catch (error) {
+      toast.error(error.message || "Failed to mark payment");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const getPaymentStatusLabel = (status) => {
+    if (status === "paid") return "Paid";
+    if (status === "pending_confirmation") return "Waiting for Confirmation";
+    return "Pending";
   };
 
   const handleRating = async () => {
@@ -225,57 +263,6 @@ export default function RequestDetails() {
     );
   };
 
-  const getStatusTimeline = () => {
-    const steps = [
-      "pending",
-      "awaiting_technician_acceptance",
-      "assigned",
-      "accepted",
-      "on_the_way",
-      "in_progress",
-      "completed",
-      "rated",
-    ];
-    const currentIndex = steps.indexOf(request?.status);
-
-    return (
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          marginTop: "24px",
-        }}
-      >
-        {steps.map((step, index) => (
-          <div key={step} style={{ textAlign: "center", flex: 1 }}>
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: "50%",
-                background:
-                  index <= currentIndex ? "var(--success)" : "var(--gray-200)",
-                color: index <= currentIndex ? "white" : "var(--gray-500)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                margin: "0 auto 8px",
-                fontSize: "0.875rem",
-              }}
-            >
-              {index < currentIndex ? "✓" : index + 1}
-            </div>
-            <span
-              className={`text-xs ${index <= currentIndex ? "" : "text-muted"}`}
-            >
-              {step.replace(/_/g, " ")}
-            </span>
-          </div>
-        ))}
-      </div>
-    );
-  };
-
   if (loading) {
     return (
       <div className="loading-page">
@@ -287,6 +274,22 @@ export default function RequestDetails() {
   if (!request) {
     return null;
   }
+
+  const displayAmount = (() => {
+    const fromUpiResponse = Number(upiPaymentData?.amount);
+    if (Number.isFinite(fromUpiResponse) && fromUpiResponse > 0) {
+      return fromUpiResponse;
+    }
+    const fromFinal = Number(request?.final_price);
+    if (Number.isFinite(fromFinal) && fromFinal > 0) {
+      return fromFinal;
+    }
+    const fromEstimated = Number(request?.estimated_price);
+    if (Number.isFinite(fromEstimated) && fromEstimated > 0) {
+      return fromEstimated;
+    }
+    return null;
+  })();
 
   return (
     <div>
@@ -303,307 +306,149 @@ export default function RequestDetails() {
             ← Back
           </button>
         </div>
-        <h1>Request Details</h1>
-        <p>Request ID: {request._id}</p>
+        <h1>Request</h1>
+        <p className="text-muted text-sm">#{request._id}</p>
       </div>
 
       <div
         style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "24px" }}
       >
-        {/* Main Details */}
         <div>
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title">Service Information</h3>
+              <h3 className="card-title">Overview</h3>
               {getStatusBadge(request.status)}
             </div>
             <div className="card-body">
-              {getStatusTimeline()}
-
-              <div style={{ marginTop: "32px", display: "grid", gap: "16px" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "12px 0",
-                    borderBottom: "1px solid var(--border-color)",
-                  }}
-                >
-                  <span className="text-secondary">Category</span>
-                  <strong style={{ textTransform: "capitalize" }}>
-                    {request.category}
-                  </strong>
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "12px 0",
-                    borderBottom: "1px solid var(--border-color)",
-                  }}
-                >
-                  <span className="text-secondary">Urgency</span>
-                  <strong style={{ textTransform: "capitalize" }}>
-                    {request.urgency}
-                  </strong>
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "12px 0",
-                    borderBottom: "1px solid var(--border-color)",
-                  }}
-                >
-                  <span className="text-secondary">Created</span>
-                  <strong>
-                    {new Date(request.created_at).toLocaleString()}
-                  </strong>
-                </div>
-                {request.eta_minutes && (
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      padding: "12px 0",
-                      borderBottom: "1px solid var(--border-color)",
-                    }}
-                  >
-                    <span className="text-secondary">ETA</span>
-                    <strong>{request.eta_minutes} minutes</strong>
-                  </div>
-                )}
-                {request.description && (
-                  <div style={{ padding: "12px 0" }}>
-                    <span className="text-secondary">Description</span>
-                    <p style={{ marginTop: "8px" }}>{request.description}</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Location */}
-          <div className="card" style={{ marginTop: "24px" }}>
-            <div className="card-header">
-              <h3 className="card-title">Location</h3>
-            </div>
-            <div className="card-body">
-              <div style={{ display: "flex", gap: "24px" }}>
-                <div>
-                  <span className="text-secondary">Latitude</span>
-                  <p className="font-semibold">{request.location?.latitude}</p>
-                </div>
-                <div>
-                  <span className="text-secondary">Longitude</span>
-                  <p className="font-semibold">{request.location?.longitude}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Live Tracking - Ola/Rapido Style */}
-          {trackingActive && technicianLocation && (
-            <div className="card" style={{ marginTop: "24px" }}>
               <div
-                className="card-header"
                 style={{
-                  background: "linear-gradient(135deg, #4CAF50, #2196F3)",
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                  gap: "16px",
                 }}
               >
-                <h3
-                  className="card-title"
-                  style={{
-                    color: "white",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                  }}
-                >
-                  <span style={{ animation: "pulse 1s infinite" }}>📍</span>
-                  Live Tracking
-                </h3>
-                <span
-                  className="badge badge-success"
-                  style={{ background: "white", color: "#4CAF50" }}
-                >
-                  {request.status === "on_the_way" ? "On The Way" : "Accepted"}
+                <div>
+                  <div className="text-secondary text-xs">Category</div>
+                  <div
+                    className="font-semibold"
+                    style={{ textTransform: "capitalize" }}
+                  >
+                    {request.category}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-secondary text-xs">Urgency</div>
+                  <div
+                    className="font-semibold"
+                    style={{ textTransform: "capitalize" }}
+                  >
+                    {request.urgency}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-secondary text-xs">Created</div>
+                  <div className="font-semibold">
+                    {new Date(request.created_at).toLocaleDateString()}
+                  </div>
+                </div>
+                {request.eta_minutes && (
+                  <div>
+                    <div className="text-secondary text-xs">ETA</div>
+                    <div className="font-semibold">{request.eta_minutes}m</div>
+                  </div>
+                )}
+              </div>
+              {request.description && (
+                <details style={{ marginTop: "16px" }}>
+                  <summary className="text-secondary text-sm">Details</summary>
+                  <p style={{ marginTop: "8px" }}>{request.description}</p>
+                </details>
+              )}
+            </div>
+          </div>
+
+          {trackingActive && technicianLocation && (
+            <div className="card" style={{ marginTop: "24px" }}>
+              <div className="card-header">
+                <h3 className="card-title">Tracking</h3>
+                <span className="badge badge-success">
+                  {request.status === "on_the_way" ? "On the way" : "Accepted"}
                 </span>
               </div>
-              <div className="card-body" style={{ padding: "24px" }}>
-                {/* Technician Info */}
+              <div
+                className="card-body"
+                style={{ display: "grid", gap: "12px" }}
+              >
                 <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "16px",
-                    marginBottom: "20px",
-                  }}
+                  style={{ display: "flex", alignItems: "center", gap: "12px" }}
                 >
                   <div
                     style={{
-                      width: "60px",
-                      height: "60px",
+                      width: "44px",
+                      height: "44px",
                       borderRadius: "50%",
                       background: "var(--primary-bg)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      fontSize: "1.5rem",
+                      fontSize: "1.25rem",
                     }}
                   >
                     👨‍🔧
                   </div>
                   <div>
-                    <h4 style={{ margin: 0 }}>
+                    <div className="font-semibold">
                       {technicianLocation.technician_name || "Technician"}
-                    </h4>
-                    <p className="text-muted" style={{ margin: "4px 0 0" }}>
-                      {request.category} Specialist
-                    </p>
+                    </div>
+                    <div className="text-muted text-sm">{request.category}</div>
                   </div>
                 </div>
-
-                {/* ETA Display - Big and prominent */}
-                <div
-                  style={{
-                    textAlign: "center",
-                    padding: "24px",
-                    background:
-                      "linear-gradient(135deg, var(--primary-bg), var(--success-bg))",
-                    borderRadius: "12px",
-                    marginBottom: "20px",
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: "3rem",
-                      fontWeight: "bold",
-                      color: "var(--primary)",
-                    }}
-                  >
-                    {technicianLocation.eta_minutes || "?"} min
-                  </div>
-                  <div className="text-muted">Estimated Time of Arrival</div>
+                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                  <span className="badge badge-info">
+                    ETA {technicianLocation.eta_minutes || "?"}m
+                  </span>
                   {technicianLocation.distance_km && (
-                    <div style={{ marginTop: "8px", fontSize: "0.9rem" }}>
-                      📍 {technicianLocation.distance_km.toFixed(1)} km away
-                    </div>
+                    <span className="badge badge-secondary">
+                      {technicianLocation.distance_km.toFixed(1)} km
+                    </span>
                   )}
                 </div>
-
-                {/* Live Stats */}
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr 1fr",
-                    gap: "16px",
-                    textAlign: "center",
-                  }}
-                >
-                  <div
-                    style={{
-                      padding: "12px",
-                      background: "var(--background)",
-                      borderRadius: "8px",
-                    }}
-                  >
-                    <div style={{ fontSize: "1.2rem", fontWeight: "bold" }}>
-                      {technicianLocation.speed_kmh?.toFixed(0) || 0} km/h
-                    </div>
-                    <div className="text-muted" style={{ fontSize: "0.75rem" }}>
-                      Speed
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      padding: "12px",
-                      background: "var(--background)",
-                      borderRadius: "8px",
-                    }}
-                  >
-                    <div style={{ fontSize: "1.2rem", fontWeight: "bold" }}>
-                      {technicianLocation.heading
-                        ? `${technicianLocation.heading}°`
-                        : "N/A"}
-                    </div>
-                    <div className="text-muted" style={{ fontSize: "0.75rem" }}>
-                      Direction
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      padding: "12px",
-                      background: "var(--background)",
-                      borderRadius: "8px",
-                    }}
-                  >
-                    <div style={{ fontSize: "1.2rem", fontWeight: "bold" }}>
-                      {technicianLocation.accuracy_meters?.toFixed(0) || "?"} m
-                    </div>
-                    <div className="text-muted" style={{ fontSize: "0.75rem" }}>
-                      GPS Accuracy
-                    </div>
-                  </div>
-                </div>
-
-                {/* Live Map View - Ola/Rapido Style */}
-                <div style={{ marginTop: "20px" }}>
-                  <MapView
-                    technicianPosition={
-                      technicianLocation.latitude &&
-                      technicianLocation.longitude
-                        ? [
-                            technicianLocation.latitude,
-                            technicianLocation.longitude,
-                          ]
-                        : null
-                    }
-                    customerPosition={
-                      request.location?.latitude && request.location?.longitude
-                        ? [
-                            request.location.latitude,
-                            request.location.longitude,
-                          ]
-                        : null
-                    }
-                    technicianName={
-                      technicianLocation.technician_name || "Technician"
-                    }
-                    customerAddress={request.address || "Your Location"}
-                    eta={technicianLocation.eta_minutes}
-                    distance={technicianLocation.distance_km}
-                    speed={technicianLocation.speed_kmh}
-                    heading={technicianLocation.heading}
-                    status={request.status}
-                    mode="customer"
-                    height="350px"
-                  />
-                </div>
-
-                {/* Last updated */}
-                <p
-                  style={{
-                    textAlign: "center",
-                    marginTop: "16px",
-                    fontSize: "0.75rem",
-                    color: "var(--text-muted)",
-                  }}
-                >
-                  Last updated: {new Date().toLocaleTimeString()} •
-                  Auto-refreshing every 5 seconds
-                </p>
+                <MapView
+                  technicianPosition={
+                    technicianLocation.latitude && technicianLocation.longitude
+                      ? [
+                          technicianLocation.latitude,
+                          technicianLocation.longitude,
+                        ]
+                      : null
+                  }
+                  customerPosition={
+                    request.location?.latitude && request.location?.longitude
+                      ? [request.location.latitude, request.location.longitude]
+                      : null
+                  }
+                  technicianName={
+                    technicianLocation.technician_name || "Technician"
+                  }
+                  customerAddress={request.address || "Your Location"}
+                  eta={technicianLocation.eta_minutes}
+                  distance={technicianLocation.distance_km}
+                  speed={technicianLocation.speed_kmh}
+                  heading={technicianLocation.heading}
+                  status={request.status}
+                  mode="customer"
+                  height="340px"
+                />
               </div>
             </div>
           )}
 
-          {/* Assigned Technician Info (when not tracking) */}
           {request.technician &&
             !trackingActive &&
             request.status !== "pending" && (
               <div className="card" style={{ marginTop: "24px" }}>
                 <div className="card-header">
-                  <h3 className="card-title">Assigned Technician</h3>
+                  <h3 className="card-title">Technician</h3>
                 </div>
                 <div className="card-body">
                   <div
@@ -644,9 +489,7 @@ export default function RequestDetails() {
                           <span>⭐ {request.technician.rating.toFixed(1)}</span>
                         )}
                         {request.technician.completed_jobs !== undefined && (
-                          <span>
-                            ✅ {request.technician.completed_jobs} jobs
-                          </span>
+                          <span>{request.technician.completed_jobs} jobs</span>
                         )}
                       </div>
                     </div>
@@ -655,265 +498,86 @@ export default function RequestDetails() {
               </div>
             )}
 
-          {/* Suggested Technicians (ML-powered) */}
           {["pending", "awaiting_technician_acceptance", "assigned"].includes(
             request.status,
           ) && (
             <div className="card" style={{ marginTop: "24px" }}>
               <div className="card-header">
-                <h3 className="card-title">🤖 ML-Recommended Technician</h3>
+                <h3 className="card-title">Suggested Technicians</h3>
               </div>
               <div className="card-body">
                 {loadingSuggestions ? (
                   <div style={{ textAlign: "center", padding: "24px" }}>
                     <div className="loading-spinner"></div>
-                    <p className="text-muted" style={{ marginTop: "8px" }}>
-                      Analyzing available technicians with ML model...
-                    </p>
                   </div>
                 ) : suggestedTechnicians.length > 0 ? (
-                  <div style={{ display: "grid", gap: "16px" }}>
-                    {/* Best ML Recommendation */}
-                    <div
-                      style={{
-                        padding: "20px",
-                        borderRadius: "12px",
-                        background:
-                          "linear-gradient(135deg, var(--success-bg), var(--primary-bg))",
-                        border: "2px solid var(--success)",
-                        position: "relative",
-                      }}
-                    >
+                  <div style={{ display: "grid", gap: "12px" }}>
+                    {suggestedTechnicians.map((tech, index) => (
                       <div
+                        key={tech.technician_id || tech.id || index}
                         style={{
-                          position: "absolute",
-                          top: "-10px",
-                          left: "16px",
-                          background: "var(--success)",
-                          color: "white",
-                          padding: "4px 12px",
-                          borderRadius: "20px",
-                          fontSize: "0.75rem",
-                          fontWeight: "bold",
-                        }}
-                      >
-                        🏆 ML Best Match
-                      </div>
-                      <div
-                        style={{
-                          marginTop: "8px",
+                          padding: "12px 16px",
+                          borderRadius: "12px",
+                          border: "1px solid var(--border-color)",
                           display: "flex",
+                          alignItems: "center",
                           justifyContent: "space-between",
-                          alignItems: "flex-start",
+                          background:
+                            index === 0
+                              ? "linear-gradient(135deg, var(--success-bg), var(--primary-bg))"
+                              : "var(--white)",
                         }}
                       >
                         <div>
-                          <h4
-                            style={{ fontSize: "1.25rem", marginBottom: "8px" }}
-                          >
-                            {suggestedTechnicians[0].name}
-                          </h4>
+                          <div className="font-semibold">{tech.name}</div>
                           <div
-                            style={{
-                              display: "flex",
-                              gap: "16px",
-                              fontSize: "0.875rem",
-                              flexWrap: "wrap",
-                            }}
+                            className="text-muted text-xs"
+                            style={{ marginTop: "4px" }}
                           >
-                            <span>
-                              ⭐{" "}
-                              {suggestedTechnicians[0].rating?.toFixed(1) ||
-                                "N/A"}{" "}
-                              rating
-                            </span>
-                            <span>
-                              ✅ {suggestedTechnicians[0].completed_jobs} jobs
-                              completed
-                            </span>
-                            <span>
-                              📍{" "}
-                              {suggestedTechnicians[0].distance_km?.toFixed(
-                                1,
-                              ) || "?"}{" "}
-                              km away
-                            </span>
-                            <span>
-                              ⏱️ ETA: ~{suggestedTechnicians[0].eta_minutes} min
-                            </span>
-                          </div>
-                          <div
-                            style={{ marginTop: "8px", fontSize: "0.875rem" }}
-                          >
-                            <strong>Skills:</strong>{" "}
-                            {suggestedTechnicians[0].skills?.join(", ")}
+                            ⭐ {tech.rating?.toFixed(1) || "N/A"} •{" "}
+                            {tech.eta_minutes}m • {tech.distance_km?.toFixed(1)}{" "}
+                            km
                           </div>
                         </div>
-                        <div style={{ textAlign: "center", minWidth: "80px" }}>
-                          <div
-                            style={{
-                              fontSize: "2rem",
-                              fontWeight: "bold",
-                              color: "var(--success)",
-                              lineHeight: "1",
-                            }}
-                          >
-                            {Math.round(
-                              suggestedTechnicians[0].predicted_success * 100,
-                            )}
-                            %
-                          </div>
-                          <div
-                            style={{
-                              fontSize: "0.7rem",
-                              color: "var(--text-muted)",
-                            }}
-                          >
-                            ML Confidence
-                          </div>
-                          <div
-                            style={{
-                              marginTop: "4px",
-                              fontSize: "0.65rem",
-                              padding: "2px 6px",
-                              background: "var(--primary-bg)",
-                              borderRadius: "4px",
-                              color: "var(--primary)",
-                            }}
-                          >
-                            {suggestedTechnicians[0].prediction_source ===
-                            "model"
-                              ? "Neural Network"
-                              : "Heuristic"}
-                          </div>
-                        </div>
-                      </div>
-                      <p
-                        style={{
-                          marginTop: "12px",
-                          fontSize: "0.8rem",
-                          color: "var(--success)",
-                          fontWeight: "500",
-                        }}
-                      >
-                        ✨ Best match identified. Confirm to assign and notify
-                        the technician.
-                      </p>
-                      {request.status === "pending" && (
-                        <button
-                          className="btn btn-primary"
-                          style={{ marginTop: "8px" }}
-                          onClick={() =>
-                            chooseTechnician(suggestedTechnicians[0].id)
-                          }
-                          disabled={confirming}
-                        >
-                          {confirming
-                            ? "Sending Request..."
-                            : "Choose & Send Request"}
-                        </button>
-                      )}
-                      {request.status === "awaiting_technician_acceptance" && (
                         <div
                           style={{
-                            marginTop: "12px",
-                            padding: "8px 16px",
-                            background: "var(--warning-bg)",
-                            borderRadius: "8px",
-                            fontSize: "0.85rem",
-                            color: "var(--warning)",
-                            fontWeight: 500,
+                            display: "flex",
+                            gap: "8px",
+                            alignItems: "center",
                           }}
                         >
-                          ⏳ Waiting for technician to accept...
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Other Available Technicians */}
-                    {suggestedTechnicians.length > 1 && (
-                      <div style={{ marginTop: "8px" }}>
-                        <h4
-                          style={{
-                            fontSize: "0.9rem",
-                            color: "var(--text-secondary)",
-                            marginBottom: "12px",
-                          }}
-                        >
-                          📋 Other Available Technicians (
-                          {suggestedTechnicians.length - 1})
-                        </h4>
-                        <div style={{ display: "grid", gap: "8px" }}>
-                          {suggestedTechnicians.slice(1).map((tech) => (
-                            <div
-                              key={tech.id}
-                              style={{
-                                padding: "12px 16px",
-                                borderRadius: "8px",
-                                background: "var(--background)",
-                                border: "1px solid var(--border-color)",
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                              }}
+                          <span className="badge badge-secondary">
+                            {Math.round(tech.predicted_success * 100)}%
+                          </span>
+                          {request.status === "pending" && index === 0 && (
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={() =>
+                                chooseTechnician(tech.technician_id || tech.id)
+                              }
+                              disabled={confirming}
                             >
-                              <div>
-                                <strong style={{ fontSize: "0.95rem" }}>
-                                  {tech.name}
-                                </strong>
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    gap: "12px",
-                                    marginTop: "4px",
-                                    fontSize: "0.8rem",
-                                    color: "var(--text-muted)",
-                                  }}
-                                >
-                                  <span>⭐ {tech.rating?.toFixed(1)}</span>
-                                  <span>✅ {tech.completed_jobs} jobs</span>
-                                  <span>
-                                    📍 {tech.distance_km?.toFixed(1)} km
-                                  </span>
-                                  <span>⏱️ ~{tech.eta_minutes} min</span>
-                                </div>
-                              </div>
-                              <div style={{ textAlign: "right" }}>
-                                <div
-                                  style={{
-                                    fontSize: "1rem",
-                                    fontWeight: "bold",
-                                    color: "var(--primary)",
-                                  }}
-                                >
-                                  {Math.round(tech.predicted_success * 100)}%
-                                </div>
-                                <div
-                                  style={{
-                                    fontSize: "0.65rem",
-                                    color: "var(--text-muted)",
-                                  }}
-                                >
-                                  confidence
-                                </div>
-                              </div>
-                            </div>
-                          ))}
+                              {confirming ? "..." : "Choose"}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {request.status === "awaiting_technician_acceptance" && (
+                      <div
+                        className="alert alert-warning"
+                        style={{ marginBottom: 0 }}
+                      >
+                        <span className="alert-icon">⏳</span>
+                        <div className="alert-content">
+                          <strong>Waiting for acceptance</strong>
                         </div>
                       </div>
                     )}
                   </div>
                 ) : (
                   <div style={{ textAlign: "center", padding: "24px" }}>
-                    <p className="text-muted">
-                      No technicians available for this category right now.
-                    </p>
-                    <p
-                      className="text-muted"
-                      style={{ fontSize: "0.875rem", marginTop: "8px" }}
-                    >
-                      We'll notify you once one becomes available.
-                    </p>
+                    <p className="text-muted">No technicians available</p>
                   </div>
                 )}
               </div>
@@ -921,46 +585,32 @@ export default function RequestDetails() {
           )}
         </div>
 
-        {/* Sidebar */}
         <div>
-          {/* Pricing */}
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title">Pricing</h3>
+              <h3 className="card-title">Payment</h3>
             </div>
             <div className="card-body">
-              {request.estimated_price && (
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    marginBottom: "12px",
-                  }}
-                >
-                  <span className="text-secondary">Estimated</span>
-                  <span>₹{request.estimated_price.toFixed(2)}</span>
+              <div
+                style={{ display: "flex", alignItems: "baseline", gap: "8px" }}
+              >
+                <div className="text-secondary text-xs">Amount</div>
+                <div className="request-price">
+                  ₹{displayAmount?.toFixed(2) || "0.00"}
                 </div>
-              )}
-              {request.final_price && (
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    fontSize: "1.25rem",
-                  }}
-                >
-                  <strong>Final Price</strong>
-                  <strong className="text-primary">
-                    ₹{request.final_price.toFixed(2)}
-                  </strong>
-                </div>
-              )}
+              </div>
               {request.payment_status && (
-                <div style={{ marginTop: "16px" }}>
+                <div style={{ marginTop: "12px" }}>
                   <span
-                    className={`badge ${request.payment_status === "paid" ? "badge-success" : "badge-warning"}`}
+                    className={`badge ${
+                      request.payment_status === "paid"
+                        ? "badge-success"
+                        : request.payment_status === "pending_confirmation"
+                          ? "badge-info"
+                          : "badge-warning"
+                    }`}
                   >
-                    Payment: {request.payment_status}
+                    {getPaymentStatusLabel(request.payment_status)}
                   </span>
                 </div>
               )}
@@ -972,22 +622,15 @@ export default function RequestDetails() {
                     className="btn btn-primary btn-block"
                     onClick={() => setShowPayModal(true)}
                   >
-                    💳 Pay Now
+                    Pay
                   </button>
                 </div>
               )}
           </div>
 
-          {/* Cancel Booking Button */}
           {canCancel() && (
             <div className="card" style={{ marginTop: "16px" }}>
               <div className="card-body" style={{ textAlign: "center" }}>
-                <p
-                  className="text-muted"
-                  style={{ marginBottom: "12px", fontSize: "0.875rem" }}
-                >
-                  Need to cancel this booking?
-                </p>
                 <button
                   className="btn btn-block"
                   style={{
@@ -997,13 +640,12 @@ export default function RequestDetails() {
                   }}
                   onClick={() => setShowCancelModal(true)}
                 >
-                  ❌ Cancel Booking
+                  Cancel
                 </button>
               </div>
             </div>
           )}
 
-          {/* Cancelled Status Info */}
           {request.status === "cancelled" && (
             <div
               className="card"
@@ -1014,7 +656,7 @@ export default function RequestDetails() {
                 style={{ background: "var(--danger-bg)" }}
               >
                 <h3 className="card-title" style={{ color: "var(--danger)" }}>
-                  Booking Cancelled
+                  Cancelled
                 </h3>
               </div>
               <div className="card-body">
@@ -1039,23 +681,19 @@ export default function RequestDetails() {
             </div>
           )}
 
-          {/* Rating */}
           {request.status === "completed" &&
             request.payment_status === "paid" &&
             !request.rating && (
               <div className="card" style={{ marginTop: "16px" }}>
                 <div className="card-header">
-                  <h3 className="card-title">Rate Service</h3>
+                  <h3 className="card-title">Rate</h3>
                 </div>
                 <div className="card-body" style={{ textAlign: "center" }}>
-                  <p className="text-secondary mb-4">
-                    How was your experience?
-                  </p>
                   <button
                     className="btn btn-primary"
                     onClick={() => setShowRatingModal(true)}
                   >
-                    ⭐ Leave a Rating
+                    Rate
                   </button>
                 </div>
               </div>
@@ -1064,13 +702,13 @@ export default function RequestDetails() {
           {request.rating && (
             <div className="card" style={{ marginTop: "16px" }}>
               <div className="card-header">
-                <h3 className="card-title">Your Rating</h3>
+                <h3 className="card-title">Rating</h3>
               </div>
               <div className="card-body" style={{ textAlign: "center" }}>
                 <div style={{ fontSize: "2rem" }}>
                   {"⭐".repeat(request.rating)}
                 </div>
-                <p className="text-secondary">{request.rating}/5 stars</p>
+                <p className="text-secondary">{request.rating}/5</p>
               </div>
             </div>
           )}
@@ -1082,7 +720,7 @@ export default function RequestDetails() {
         <div className="modal-overlay" onClick={() => setShowPayModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">Complete Payment</h3>
+              <h3 className="modal-title">Payment</h3>
               <button
                 className="modal-close"
                 onClick={() => setShowPayModal(false)}
@@ -1092,31 +730,86 @@ export default function RequestDetails() {
             </div>
             <div className="modal-body">
               <div style={{ textAlign: "center", padding: "24px 0" }}>
-                <div style={{ fontSize: "3rem", marginBottom: "16px" }}>💳</div>
+                <div style={{ fontSize: "2.5rem", marginBottom: "12px" }}>
+                  💳
+                </div>
                 <h3 style={{ marginBottom: "8px" }}>
-                  Total: $
-                  {request.final_price?.toFixed(2) ||
-                    request.estimated_price?.toFixed(2)}
+                  ₹{displayAmount?.toFixed(2) || "0.00"}
                 </h3>
-                <p className="text-secondary">
-                  Click confirm to process payment
-                </p>
+                {!upiPaymentData && (
+                  <>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "8px",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <button
+                        className={`btn ${paymentMethod === "cash" ? "btn-primary" : "btn-secondary"}`}
+                        onClick={() => setPaymentMethod("cash")}
+                        type="button"
+                      >
+                        Cash
+                      </button>
+                      <button
+                        className={`btn ${paymentMethod === "upi" ? "btn-primary" : "btn-secondary"}`}
+                        onClick={() => setPaymentMethod("upi")}
+                        type="button"
+                      >
+                        UPI
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {upiPaymentData && (
+                  <div style={{ marginTop: "16px" }}>
+                    <p className="text-secondary">Scan & pay</p>
+                    <img
+                      src={`data:image/png;base64,${upiPaymentData.qr_code}`}
+                      alt="UPI QR"
+                      style={{
+                        width: 220,
+                        height: 220,
+                        borderRadius: 8,
+                        border: "1px solid var(--border-color)",
+                      }}
+                    />
+                    <p style={{ marginTop: "8px" }}>
+                      UPI ID: <strong>{upiPaymentData.upi_id}</strong>
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
             <div className="modal-footer">
               <button
                 className="btn btn-secondary"
-                onClick={() => setShowPayModal(false)}
+                onClick={() => {
+                  setShowPayModal(false);
+                  setUpiPaymentData(null);
+                }}
               >
                 Cancel
               </button>
-              <button
-                className="btn btn-primary"
-                onClick={handlePayment}
-                disabled={processing}
-              >
-                {processing ? "Processing..." : "Confirm Payment"}
-              </button>
+              {!upiPaymentData ? (
+                <button
+                  className="btn btn-primary"
+                  onClick={handlePayment}
+                  disabled={processing}
+                >
+                  {processing ? "..." : "Continue"}
+                </button>
+              ) : (
+                <button
+                  className="btn btn-primary"
+                  onClick={markUpiPaid}
+                  disabled={processing}
+                >
+                  {processing ? "..." : "I Have Paid"}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1130,7 +823,7 @@ export default function RequestDetails() {
         >
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">Rate Your Experience</h3>
+              <h3 className="modal-title">Rate</h3>
               <button
                 className="modal-close"
                 onClick={() => setShowRatingModal(false)}
@@ -1155,17 +848,6 @@ export default function RequestDetails() {
                     </span>
                   ))}
                 </div>
-                <p className="text-secondary" style={{ marginTop: "16px" }}>
-                  {rating === 5
-                    ? "Excellent!"
-                    : rating === 4
-                      ? "Great!"
-                      : rating === 3
-                        ? "Good"
-                        : rating === 2
-                          ? "Fair"
-                          : "Poor"}
-                </p>
               </div>
             </div>
             <div className="modal-footer">
@@ -1180,7 +862,7 @@ export default function RequestDetails() {
                 onClick={handleRating}
                 disabled={processing}
               >
-                {processing ? "Submitting..." : "Submit Rating"}
+                {processing ? "..." : "Submit"}
               </button>
             </div>
           </div>
@@ -1203,7 +885,7 @@ export default function RequestDetails() {
               style={{ background: "var(--danger-bg)" }}
             >
               <h3 className="modal-title" style={{ color: "var(--danger)" }}>
-                Cancel Booking
+                Cancel
               </h3>
               <button
                 className="modal-close"
@@ -1213,9 +895,7 @@ export default function RequestDetails() {
               </button>
             </div>
             <div className="modal-body">
-              <p style={{ marginBottom: "16px" }}>
-                Please select a reason for cancellation:
-              </p>
+              <p style={{ marginBottom: "16px" }}>Reason</p>
 
               <div style={{ display: "grid", gap: "8px" }}>
                 {Object.entries(cancellationReasons).map(([key, label]) => (
@@ -1251,9 +931,7 @@ export default function RequestDetails() {
               </div>
 
               <div style={{ marginTop: "16px" }}>
-                <label className="form-label">
-                  Additional Notes (optional)
-                </label>
+                <label className="form-label">Notes (optional)</label>
                 <textarea
                   className="input"
                   rows={3}
@@ -1262,19 +940,6 @@ export default function RequestDetails() {
                   onChange={(e) => setCancelNotes(e.target.value)}
                   style={{ resize: "vertical" }}
                 ></textarea>
-              </div>
-
-              <div
-                style={{
-                  marginTop: "16px",
-                  padding: "12px",
-                  background: "var(--warning-bg)",
-                  borderRadius: "8px",
-                  fontSize: "0.875rem",
-                }}
-              >
-                ⚠️ <strong>Note:</strong> Cancellation may affect future service
-                availability. Please only cancel if absolutely necessary.
               </div>
             </div>
             <div className="modal-footer">
@@ -1286,7 +951,7 @@ export default function RequestDetails() {
                   setCancelNotes("");
                 }}
               >
-                Keep Booking
+                Keep
               </button>
               <button
                 className="btn"
@@ -1294,7 +959,7 @@ export default function RequestDetails() {
                 onClick={handleCancel}
                 disabled={processing || !selectedCancelReason}
               >
-                {processing ? "Cancelling..." : "Confirm Cancellation"}
+                {processing ? "..." : "Cancel"}
               </button>
             </div>
           </div>

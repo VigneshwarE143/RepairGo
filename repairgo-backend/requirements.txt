@@ -11,3 +11,7 @@ numpy
 pandas
 scikit-learn
 joblib
+huggingface_hub
+razorpay
+qrcode
+Pillow

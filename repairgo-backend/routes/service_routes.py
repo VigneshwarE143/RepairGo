@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 
 from bson import ObjectId
@@ -28,11 +29,14 @@ from utils.pricing import estimate_distance_km, estimate_price
 from utils.notification_utils import create_notification, EventType
 from utils.response_utils import success_response
 from utils.logger import logger
+from utils.payment_utils import generate_upi_qr
 
 router = APIRouter()
 
 VALID_CATEGORIES = set()
 ACTIVE_JOB_STATUSES = {"assigned", "accepted", "on_the_way", "in_progress", "awaiting_technician_acceptance"}
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
 
 # Cancellation reasons for UI display
 CANCELLATION_REASONS = {
@@ -64,6 +68,76 @@ def is_technician_busy(tech_id: str, exclude_service_id: ObjectId | None = None)
     return services_collection.count_documents(query) > 0
 
 
+def _to_amount(value) -> float:
+    """Safely normalize possible amount values to float."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except Exception:
+            return 0.0
+    if isinstance(value, dict):
+        for key in ("final_price", "estimated_price", "amount", "total"):
+            if key in value:
+                nested_amount = _to_amount(value.get(key))
+                if nested_amount > 0:
+                    return nested_amount
+    return 0.0
+
+
+def _resolve_payable_amount(service: dict) -> float:
+    """Resolve service payable amount, estimating and persisting when missing."""
+    amount = _to_amount(service.get("final_price"))
+    if amount <= 0:
+        amount = _to_amount(service.get("estimated_price"))
+    if amount > 0:
+        return round(amount, 2)
+
+    category = service.get("category") or "general"
+    urgency = service.get("urgency") or "low"
+    location = service.get("location") or {}
+
+    technicians = list(
+        technicians_collection.find({"availability": True, "is_active": True})
+    )
+    technicians = [
+        t for t in technicians if not is_technician_busy(str(t.get("_id")))
+    ]
+    distance_km = estimate_distance_km(location, technicians)
+    active_requests = services_collection.count_documents(
+        {
+            "status": {
+                "$in": ["pending", "assigned", "on_the_way", "in_progress"],
+            },
+            "is_active": True,
+        }
+    )
+    pricing = estimate_price(
+        category=category,
+        urgency=urgency,
+        distance_km=distance_km,
+        active_requests=active_requests,
+    )
+    amount = _to_amount(pricing.get("final_price"))
+    if amount <= 0:
+        return 0.0
+
+    service_id = service.get("_id")
+    if service_id:
+        services_collection.update_one(
+            {"_id": service_id},
+            {
+                "$set": {
+                    "estimated_price": round(amount, 2),
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+
+    return round(amount, 2)
+
+
 @router.post("/services")
 def create_service_request(
     payload: ServiceCreate,
@@ -81,6 +155,38 @@ def create_service_request(
     data["customer_id"] = user.get("_id")
     data["created_at"] = datetime.utcnow()
     data["is_active"] = True
+    data["payment_method"] = None
+    data["payment_status"] = "pending"
+    data["customer_paid"] = False
+    data["technician_confirmed"] = False
+    data["payment_time"] = None
+    try:
+        technicians = list(
+            technicians_collection.find({"availability": True, "is_active": True})
+        )
+        technicians = [
+            t for t in technicians if not is_technician_busy(str(t.get("_id")))
+        ]
+        distance_km = estimate_distance_km(payload.location.dict(), technicians)
+        active_requests = services_collection.count_documents(
+            {
+                "status": {
+                    "$in": ["pending", "assigned", "on_the_way", "in_progress"],
+                },
+                "is_active": True,
+            }
+        )
+        pricing = estimate_price(
+            category=payload.category,
+            urgency=payload.urgency,
+            distance_km=distance_km,
+            active_requests=active_requests,
+        )
+        data["estimated_price"] = round(float(pricing.get("final_price", 0.0)), 2)
+    except Exception as e:
+        logger.warning(f"Unable to pre-calculate estimated price: {e}")
+        data["estimated_price"] = 0.0
+
     result = services_collection.insert_one(data)
     service_id = result.inserted_id
     logger.info(f"Service created: service_id={service_id}, category={payload.category}")
@@ -1429,7 +1535,7 @@ def process_payment(
     Payment statuses: pending -> paid/failed -> refunded
     """
     import uuid
-    
+
     try:
         object_id = ObjectId(service_id)
     except Exception:
@@ -1455,61 +1561,321 @@ def process_payment(
     if current_payment_status == "paid":
         raise HTTPException(status_code=400, detail="Service already paid")
 
-    # Generate internal payment ID if not provided by gateway
-    payment_id = payload.transaction_id or f"PAY-{uuid.uuid4().hex[:12].upper()}"
-    
-    # Mock payment processing (in production, integrate with payment gateway)
-    # Simulate success for demo - in real implementation, call payment gateway API
-    payment_success = True  # Would be from gateway response
-    
-    if payment_success:
-        payment_status = "paid"
-        
-        # Store payment record
-        payment_record = {
-            "payment_id": payment_id,
-            "service_id": str(object_id),
-            "customer_id": user.get("_id"),
-            "amount": service.get("final_price") or service.get("estimated_price", 0),
-            "payment_method": payload.payment_method,
-            "status": "completed",
-            "created_at": datetime.utcnow(),
-        }
-        payments_collection.insert_one(payment_record)
-        
-        # Update service with payment info
+    amount = _resolve_payable_amount(service)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Invalid payable amount. Please set service price first")
+
+    technician_id = service.get("technician_id")
+
+    if payload.payment_method == "cash":
+        if not technician_id:
+            raise HTTPException(status_code=400, detail="No assigned technician for this service")
+
+        if current_payment_status == "paid":
+            raise HTTPException(status_code=400, detail="Service already paid")
+
+        payment_id = payload.transaction_id or f"PAY-{uuid.uuid4().hex[:12].upper()}"
+        payments_collection.update_one(
+            {"service_id": str(object_id), "payment_method": "cash"},
+            {
+                "$set": {
+                    "service_id": str(object_id),
+                    "customer_id": user.get("_id"),
+                    "technician_id": technician_id,
+                    "amount": amount,
+                    "status": "paid",
+                    "payment_method": "cash",
+                    "payment_id": payment_id,
+                    "created_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+            upsert=True,
+        )
+
+        service_update = services_collection.update_one(
+            {"_id": object_id, "payment_status": {"$ne": "paid"}},
+            {
+                "$set": {
+                    "payment_method": "cash",
+                    "payment_status": "paid",
+                    "customer_paid": True,
+                    "technician_confirmed": True,
+                    "payment_time": datetime.utcnow(),
+                    "payment_id": payment_id,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        if service_update.matched_count == 0:
+            raise HTTPException(status_code=400, detail="Service already paid")
+
+        technicians_collection.update_one(
+            {"_id": ObjectId(technician_id)},
+            {"$inc": {"earnings": float(amount)}},
+        )
+
+        create_notification(
+            recipient_id=technician_id,
+            event_type=EventType.PAYMENT,
+            message=f"Cash payment received for service {service_id}.",
+            related_id=str(service_id),
+        )
+
+        return success_response(
+            "Cash payment marked as paid",
+            {
+                "status": "paid",
+                "payment_method": "cash",
+                "amount": amount,
+            },
+        )
+
+    if payload.payment_method == "upi":
+        if not technician_id:
+            raise HTTPException(status_code=400, detail="No assigned technician for this service")
+
+        technician = technicians_collection.find_one({"_id": ObjectId(technician_id), "is_active": True})
+        if not technician:
+            raise HTTPException(status_code=404, detail="Assigned technician not found")
+
+        tech_upi_id = (technician.get("upi_id") or "").strip()
+        if "@" not in tech_upi_id:
+            raise HTTPException(status_code=400, detail="Technician UPI is not configured")
+
+        if payload.customer_paid:
+            if service.get("customer_paid"):
+                raise HTTPException(status_code=400, detail="Customer payment already marked")
+
+            payments_collection.update_one(
+                {"service_id": str(object_id), "payment_method": "upi"},
+                {
+                    "$set": {
+                        "service_id": str(object_id),
+                        "customer_id": user.get("_id"),
+                        "technician_id": technician_id,
+                        "amount": amount,
+                        "status": "pending_confirmation",
+                        "payment_method": "upi",
+                        "updated_at": datetime.utcnow(),
+                    },
+                    "$setOnInsert": {
+                        "created_at": datetime.utcnow(),
+                    },
+                },
+                upsert=True,
+            )
+
+            customer_mark = services_collection.update_one(
+                {"_id": object_id, "customer_paid": {"$ne": True}},
+                {
+                    "$set": {
+                        "payment_method": "upi",
+                        "customer_paid": True,
+                        "technician_confirmed": False,
+                        "payment_status": "pending_confirmation",
+                        "updated_at": datetime.utcnow(),
+                    }
+                },
+            )
+            if customer_mark.matched_count == 0:
+                raise HTTPException(status_code=400, detail="Customer payment already marked")
+
+            create_notification(
+                recipient_id=technician_id,
+                event_type=EventType.PAYMENT,
+                message="Customer marked UPI payment as completed. Please confirm receipt.",
+                related_id=str(service_id),
+            )
+
+            return success_response(
+                "Customer payment marked. Waiting for technician confirmation.",
+                {
+                    "status": "pending_confirmation",
+                    "payment_method": "upi",
+                    "customer_paid": True,
+                    "technician_confirmed": False,
+                },
+            )
+
+        qr_code = generate_upi_qr(tech_upi_id, technician.get("name", "Technician"), amount)
+        payments_collection.update_one(
+            {"service_id": str(object_id), "payment_method": "upi"},
+            {
+                "$set": {
+                    "service_id": str(object_id),
+                    "customer_id": user.get("_id"),
+                    "technician_id": technician_id,
+                    "amount": amount,
+                    "status": "created",
+                    "payment_method": "upi",
+                    "updated_at": datetime.utcnow(),
+                },
+                "$setOnInsert": {
+                    "created_at": datetime.utcnow(),
+                },
+            },
+            upsert=True,
+        )
+
         services_collection.update_one(
             {"_id": object_id},
             {
                 "$set": {
-                    "payment_status": payment_status,
+                    "payment_method": "upi",
+                    "payment_status": "pending",
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+
+        return success_response(
+            "UPI payment initialized",
+            {
+                "upi_id": tech_upi_id,
+                "amount": amount,
+                "qr_code": qr_code,
+                "status": "pending",
+                "payment_method": "upi",
+            },
+        )
+
+    # Verification phase: same endpoint handles verify after Razorpay popup success.
+    import razorpay
+
+    if payload.razorpay_payment_id and payload.razorpay_order_id and payload.razorpay_signature:
+        if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+            raise HTTPException(status_code=500, detail="Razorpay keys are not configured")
+
+        client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+        try:
+            client.utility.verify_payment_signature(
+                {
+                    "razorpay_order_id": payload.razorpay_order_id,
+                    "razorpay_payment_id": payload.razorpay_payment_id,
+                    "razorpay_signature": payload.razorpay_signature,
+                }
+            )
+        except Exception:
+            payments_collection.update_one(
+                {"service_id": str(object_id), "razorpay_order_id": payload.razorpay_order_id},
+                {
+                    "$set": {
+                        "status": "failed",
+                        "updated_at": datetime.utcnow(),
+                    }
+                },
+            )
+            raise HTTPException(status_code=400, detail="Payment signature verification failed")
+
+        payment_id = payload.transaction_id or f"PAY-{uuid.uuid4().hex[:12].upper()}"
+
+        payments_collection.update_one(
+            {"service_id": str(object_id), "razorpay_order_id": payload.razorpay_order_id},
+            {
+                "$set": {
+                    "status": "paid",
+                    "payment_method": payload.payment_method,
+                    "razorpay_payment_id": payload.razorpay_payment_id,
                     "payment_id": payment_id,
+                    "updated_at": datetime.utcnow(),
+                },
+                "$setOnInsert": {
+                    "service_id": str(object_id),
+                    "customer_id": user.get("_id"),
+                    "technician_id": service.get("technician_id"),
+                    "amount": amount,
+                    "created_at": datetime.utcnow(),
+                },
+            },
+            upsert=True,
+        )
+
+        services_collection.update_one(
+            {"_id": object_id},
+            {
+                "$set": {
+                    "payment_status": "paid",
+                    "payment_id": payment_id,
+                    "razorpay_order_id": payload.razorpay_order_id,
+                    "razorpay_payment_id": payload.razorpay_payment_id,
                     "paid_at": datetime.utcnow(),
                     "updated_at": datetime.utcnow(),
                 }
             },
         )
-        
-        logger.info(f"Payment processed: service_id={service_id}, payment_id={payment_id}")
+
+        logger.info(f"Payment verified: service_id={service_id}, order_id={payload.razorpay_order_id}")
         return success_response(
             "Payment successful",
             {
                 "payment_id": payment_id,
-                "amount": payment_record["amount"],
-                "status": payment_status,
+                "status": "paid",
+                "amount": amount,
+                "razorpay_order_id": payload.razorpay_order_id,
+                "razorpay_payment_id": payload.razorpay_payment_id,
             },
         )
-    else:
-        services_collection.update_one(
-            {"_id": object_id},
+
+    # Order creation phase (Razorpay test mode)
+    if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+        raise HTTPException(status_code=500, detail="Razorpay keys are not configured")
+
+    client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+    amount_paise = int(float(amount) * 100)
+
+    try:
+        order = client.order.create(
             {
-                "$set": {
-                    "payment_status": "failed",
-                    "updated_at": datetime.utcnow(),
-                }
-            },
+                "amount": amount_paise,
+                "currency": "INR",
+                "payment_capture": 1,
+                "notes": {"service_id": str(object_id), "customer_id": user.get("_id")},
+            }
         )
-        raise HTTPException(status_code=402, detail="Payment failed")
+    except Exception as e:
+        logger.error(f"Razorpay order creation failed: service_id={service_id}, error={e}")
+        raise HTTPException(status_code=502, detail="Failed to create Razorpay order")
+
+    payments_collection.update_one(
+        {"service_id": str(object_id), "razorpay_order_id": order.get("id")},
+        {
+            "$set": {
+                "service_id": str(object_id),
+                "customer_id": user.get("_id"),
+                "technician_id": service.get("technician_id"),
+                "amount": amount,
+                "status": "created",
+                "payment_method": payload.payment_method,
+                "razorpay_order_id": order.get("id"),
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+            }
+        },
+        upsert=True,
+    )
+
+    services_collection.update_one(
+        {"_id": object_id},
+        {
+            "$set": {
+                "payment_status": "created",
+                "razorpay_order_id": order.get("id"),
+                "updated_at": datetime.utcnow(),
+            }
+        },
+    )
+
+    return success_response(
+        "Payment order created",
+        {
+            "order_id": order.get("id"),
+            "amount": amount_paise,
+            "currency": order.get("currency", "INR"),
+            "key_id": RAZORPAY_KEY_ID,
+            "status": "created",
+        },
+    )
 
 
 @router.post("/services/{service_id}/refund")
@@ -1584,3 +1950,50 @@ def process_refund(
             "status": new_status,
         },
     )
+
+
+@router.get("/services/{service_id}")
+def get_service_by_id(
+    service_id: str,
+    user=Depends(require_roles("customer", "technician", "admin")),
+):
+    """Fetch a single service by id for realtime polling fallback."""
+    try:
+        object_id = ObjectId(service_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid service id")
+
+    service = services_collection.find_one({"_id": object_id, "is_active": True})
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+
+    role = user.get("role")
+    if role == "customer" and service.get("customer_id") != user.get("_id"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if role == "technician":
+        tech_id_from_user = user.get("technician_id")
+        if not tech_id_from_user:
+            tech_doc = technicians_collection.find_one({"email": user.get("email")})
+            tech_id_from_user = str(tech_doc.get("_id")) if tech_doc else None
+        if tech_id_from_user not in {service.get("technician_id"), service.get("requested_technician")}:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    service["_id"] = str(service.get("_id"))
+
+    tech_id = service.get("technician_id") or service.get("requested_technician")
+    if tech_id:
+        try:
+            technician = technicians_collection.find_one({"_id": ObjectId(tech_id)})
+        except Exception:
+            technician = None
+        if technician:
+            service["technician_name"] = technician.get("name")
+            service["technician_location"] = {
+                "latitude": technician.get("latitude"),
+                "longitude": technician.get("longitude"),
+                "heading": technician.get("heading"),
+                "speed_kmh": technician.get("speed_kmh"),
+                "last_location_update": technician.get("last_location_update"),
+            }
+
+    return success_response("Service retrieved", service)

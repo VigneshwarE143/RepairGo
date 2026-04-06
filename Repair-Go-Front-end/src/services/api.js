@@ -22,7 +22,9 @@ api.interceptors.response.use(
   (response) => response.data,
   (error) => {
     const message = error.response?.data?.detail || error.message || 'An error occurred';
-    if (error.response?.status === 401) {
+    const requestUrl = error.config?.url || '';
+    const isAuthRequest = requestUrl.includes('/login') || requestUrl.includes('/register');
+    if (error.response?.status === 401 && !isAuthRequest) {
       localStorage.removeItem('token');
       localStorage.removeItem('role');
       window.location.href = '/login';
@@ -47,6 +49,7 @@ export const serviceAPI = {
   create: (data) => api.post('/services', data),
   estimate: (data) => api.post('/services/estimate', data),
   getMyRequests: () => api.get('/services/my'),
+  getById: (serviceId) => api.get(`/services/${serviceId}`),
   getSuggestedTechnicians: (serviceId) => api.get(`/services/${serviceId}/suggested-technicians`),
   rate: (serviceId, data) => api.post(`/services/${serviceId}/rate`, data),
   pay: (serviceId, data) => api.post(`/services/${serviceId}/pay`, data),
@@ -89,6 +92,7 @@ export const technicianAPI = {
   
   // Availability
   updateAvailability: (data) => api.patch('/technicians/availability', data),
+  confirmPayment: (serviceId, data) => api.post(`/technicians/confirm-payment/${serviceId}`, data),
 };
 
 // ============================================================================
@@ -183,6 +187,14 @@ export const mlAPI = {
     if (version) url += `?version=${version}`;
     return api.post(url);
   },
+};
+
+// ============================================================================
+// Profile API
+// ============================================================================
+export const profileAPI = {
+  getProfile: () => api.get('/profile'),
+  updateProfile: (data) => api.patch('/profile', data),
 };
 
 // ============================================================================
