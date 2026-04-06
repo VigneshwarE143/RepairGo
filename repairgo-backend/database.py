@@ -10,7 +10,14 @@ MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
     raise RuntimeError("MONGO_URI environment variable is required")
 
-client = MongoClient(MONGO_URI)
+tls_insecure = os.getenv("MONGO_TLS_INSECURE", "false").lower() == "true"
+
+client = MongoClient(
+    MONGO_URI,
+    tls=True,
+    tlsAllowInvalidCertificates=tls_insecure,
+    serverSelectionTimeoutMS=5000,
+)
 
 # Create / Use database
 db = client["repairgo"]
@@ -26,13 +33,13 @@ fraud_flags_collection = db["fraud_flags"]
 ml_models_collection = db["ml_models"]  # ML model versioning and metrics
 payments_collection = db["payments"]  # Payment transactions
 
-# Create unique indexes
+# Validate connection and create unique indexes
 try:
+    client.admin.command("ping")
     users_collection.create_index("email", unique=True)
     technicians_collection.create_index("email", unique=True)
     services_collection.create_index("service_id", unique=True, sparse=True)
     fraud_flags_collection.create_index("entity_id", unique=True, sparse=True)
+    print("MongoDB Connected Successfully ✅")
 except Exception as e:
-    print(f"Index creation warning: {e}")
-
-print("MongoDB Connected Successfully ✅")
+    print(f"MongoDB Connection Failed ❌: {e}")
