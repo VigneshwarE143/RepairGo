@@ -38,6 +38,8 @@ allowed_origins = [
     "http://127.0.0.1:5176",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://repair-go.vercel.app",
+    "https://repair-go-git-main-vigneshwars-projects-ea6ead1c.vercel.app",
 ]
 allowed_origins.extend([origin.strip() for origin in frontend_url.split(",") if origin.strip()])
 
