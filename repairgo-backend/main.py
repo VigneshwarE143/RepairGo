@@ -25,9 +25,7 @@ load_dotenv()
 
 app = FastAPI()
 
-frontend_url = os.getenv("FRONTEND_URL")
-if not frontend_url:
-    raise RuntimeError("FRONTEND_URL environment variable is required")
+frontend_url = os.getenv("FRONTEND_URL", "")
 
 allowed_origins = [
     "http://localhost:5173",
@@ -46,6 +44,7 @@ allowed_origins.extend([origin.strip() for origin in frontend_url.split(",") if 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(dict.fromkeys(allowed_origins)),
+    allow_origin_regex=r"^https://.*\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
