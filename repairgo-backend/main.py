@@ -3,7 +3,7 @@ import os
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from routes.technician_routes import router as tech_router
 from routes.service_routes import router as service_router
@@ -51,6 +51,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.options("/{full_path:path}")
+def preflight_handler(full_path: str) -> Response:
+    return Response(status_code=204)
 
 setup_exception_handlers(app)
 
